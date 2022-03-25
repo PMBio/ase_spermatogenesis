@@ -1,0 +1,158 @@
+---
+title: "fit_de_models_caroli"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "~/Desktop/Projects/ASE_Spermatogenesis_Paper/")
+```
+
+```{r python_paths}
+library(reticulate)
+use_python("/Users/jasper/Library/r-miniconda/bin/python", required = T)
+dali_path = "~/Desktop/PhD/Projects/ASE_Spermatogenesis/Scripts/dali/"
+```
+
+# get variable degs using ASE-GP model for 
+# a) Cast vs B6 F0s
+# b) Pairwise comps Caroli vs B6 (first), Caroli vs Cast, Cast vs B6 -- slight difference here because we don't use ASE signal but total
+# for static cis we need to compare posterior x ~ N(m, I), x ~ N(0, I) (setting posterior mean to zero)
+
+
+```{r load_libraries_and_data}
+library(scran)
+library(scater)
+library(viridis)
+library(pheatmap)
+library(zoo)
+library(tidyverse)
+source("./General/auxiliary.R")
+
+data <- readRDS("../data/processed/data_evo_for_fitting.rds")
+
+genes_test <- rownames(data[[1]])
+
+data_f0_b6 <- data[[1]]
+data_f0_caroli <- data[[3]]
+
+sfs_vector <- colSums(data_f0_b6) / colSums(data_f0_caroli)
+data_f0_b6_norm <- data_f0_b6 / 1
+data_f0_caroli_norm <- t(t(data_f0_caroli) * sfs_vector)
+
+rs_f0_noStab <- (data_f0_b6_norm[genes_test, ]) / (data_f0_b6_norm[genes_test, ] + data_f0_caroli_norm[genes_test, ])
+rs_f0 <- (data_f0_b6_norm[genes_test, ] + 1) / (data_f0_b6_norm[genes_test, ] + data_f0_caroli_norm[genes_test, ] + 2)
+
+total_exp <- data_f0_b6 + data_f0_caroli
+total_exp <- total_exp[genes_test,]
+```
+
+```{python python_models}
+
+import gpflow
+import numpy as np
+import matplotlib.pyplot as plt
+import tensorflow as tf
+from gpflow.utilities import print_summary, set_trainable, to_default_float
+from gpflow.mean_functions import *
+import matplotlib.pyplot as plt
+import pandas as pd
+
+def plot(m):
+  Xtest = np.linspace(0, 100, 100)[:, None]
+  mu, var = m.predict_f(Xtest)
+  out = [Xtest, mu.numpy(), var.numpy()]
+  return([out])
+
+def fit_vanilla_one_sample(X, Y, model = "cis_dynamic",  n_iterations = 100):
+  # model: ... 
+  X = np.atleast_2d(np.array(X)).transpose()
+  Y = np.atleast_2d(np.array(Y)).transpose()
+  X = X.astype("float64")
+  Y = Y.astype("float64")
+  #
+  #
+  # Base kernel
+  k = gpflow.kernels.Matern52()
+  k_const = gpflow.kernels.Constant()
+  #
+  # Coregion kernel
+  # kernel:
+  if ((model == "conserved") | (model == "cis_static")):
+    kern = k_const
+  if ((model == "cis_dynamic")):
+    kern = k
+  lik = gpflow.likelihoods.Gaussian()
+  #
+  mean_function = Constant()
+  m = gpflow.models.VGP((X, Y), kernel=kern, likelihood = lik, mean_function = mean_function)
+  # fit the covariance function parameters
+  gpflow.optimizers.Scipy().minimize(
+    m.training_loss, m.trainable_variables, options=dict(maxiter=n_iterations), method="L-BFGS-B",
+  )
+  predictions = plot(m)
+  likelihood = m.maximum_log_likelihood_objective().numpy()
+  return([m, predictions, likelihood])
+
+```
+
+```{r sssss}
+
+run_coreg_gp_python_expressed_intervals_new <- function(gene){
+  
+  data_plot_ratio <- data.frame(
+    FC_F0 = rs_f0_noStab[gene, ],
+    Interval = 1:ncol(rs_f0_noStab)
+  )
+  
+  # get intervals in which gene is expressed
+  intervals_test <- total_exp[gene, ] > 0.5
+  
+  print(table(intervals_test))
+  
+  if (sum(intervals_test) < 5){
+    print("Not enough intervals to test")
+    return(list(NA, NA, NA))
+  }
+  
+  data_plot_ratio <- data_plot_ratio[intervals_test, ]
+  
+  x_test <- as.double(data_plot_ratio$Interval)
+  y_test <- logit(data_plot_ratio$FC_F0)
+
+  X_augmented = as.matrix(x_test)
+  Y_augmented = as.matrix(y_test)
+  
+  not_exclude <- !is.infinite(Y_augmented[,1])
+  
+  if(sum(!not_exclude) / length(not_exclude) > 0.1){
+    print("Warning: More than 10% of values are NA")
+  }
+  
+  X_augmented_run <- X_augmented[not_exclude, ]
+  Y_augmented_run <- Y_augmented[not_exclude, ]
+  
+  tryCatch({
+    gp_res_parent_constant = py$fit_vanilla_one_sample(X_augmented_run, Y_augmented_run, model = "conserved")
+    gp_res_parent_cis_static = py$fit_vanilla_one_sample(X_augmented_run, Y_augmented_run, model = "cis_static")
+    gp_res_parent_cis_dynamic = py$fit_vanilla_one_sample(X_augmented_run, Y_augmented_run, model = "cis_dynamic")
+    return(list(gp_res_parent_constant, gp_res_parent_cis_static, gp_res_parent_cis_dynamic))
+  }, error=function(cond) {
+    return(NA)
+  })
+
+}
+
+results_per_gene_expressed_intervals_caroli <- lapply(genes_test, function(x){
+  print(which(genes_test == x))
+  run_coreg_gp_python_expressed_intervals_new(x)
+})
+names(results_per_gene_expressed_intervals_caroli) <- genes_test
+
+saveRDS(results_per_gene_expressed_intervals_caroli, "~/Desktop/Projects/ASE_Spermatogenesis_Paper/Data/processed/gp_fits_DE_caroli_new_2.rds")
+
+
+```
+

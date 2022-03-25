@@ -1,0 +1,850 @@
+---
+title: "Figure 2"
+author: "Jasper Panten"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "~/Desktop/Projects/ASE_Spermatogenesis_Paper_rerun//")
+```
+
+## This script reproduces the plots shown in figure 2
+## Widespread dynamic changes in cis-acting genetic effects on transcription across sperm differentiation in F1 mice
+
+# Analysis feeding into this figure:
+./Figure2_scdali_fits.R
+./Figure2_RForest_Compile_Features.R
+
+```{r load_libraries}
+library(ggplot2)
+library(pheatmap)
+library(viridis)
+library(tidyverse)
+source("./Scripts/General/auxiliary.R")
+source("./Scripts/General/reuse_functions.R")
+
+colour_vector <- c("SG" = "#046735",
+                   "SC" = "#D31281",
+                   "RS" = "#282B69",
+                   "ES" = "grey60",
+                   "Sertoli" = "#643F18",
+                   "Leydig" = "#985D25",
+                   "Immune" = "#FFDFB2")
+
+# This function takes a cell x genes matrix and a pseudotemporal ordering vector and 
+# partitions the matrix into n_partitions intervals with even width in pseudotime space, 
+# computing average values per gene
+make_pseudotime_smooth <- function(data, pt, n_partitions = 100){
+  pseudotime_here <- pt
+  pseudotime_here <- pseudotime_here - min(pseudotime_here)
+  pseudotime_here <- pseudotime_here / max(pseudotime_here) # between 0 and 1
+  intervals <- c(0, 1:n_partitions / n_partitions)
+  
+  expression_smoothed <- do.call("cbind", 
+                                 lapply(1:n_partitions, function(i){
+                                   p_lower <- intervals[i]
+                                   p_upper <-  intervals[i + 1]
+                                   ix <- which(p_lower <= pseudotime_here & pseudotime_here <= p_upper)
+                                   rowMeans(data[,ix])
+                                 }))
+  expression_smoothed
+}
+
+```
+
+We now read in the results of the scDALI tests (./Figure2_scdali_fits.R)
+
+```{r read_scdali_results}
+# read in data from persistent allelic imbalance tests
+summary_data_meanTest <- readRDS("./Data/processed/Dali_LRT_calls.csv")
+
+# exclude genes with mapping effects and genes with no reads on either allele
+summary_data_meanTest <- summary_data_meanTest[!summary_data_meanTest$Mapping_effect & 
+                                                 summary_data_meanTest$coverage_ref > 1 & summary_data_meanTest$coverage_alt > 1, ]
+
+# read results from dynamic tests and add to summary df
+results_polynomial_kernel <- readRDS("./Data/processed/Dali_scoreTest_poly.csv")
+results_cluster_kernel <- readRDS("./Data/processed/Dali_scoreTest_discrete.csv")
+
+summary_data_meanTest$pval_dali_polynomial <- results_polynomial_kernel
+summary_data_meanTest$pval_dali_discrete <- results_cluster_kernel
+
+# exclude genes with failed convergence for persistent tests
+summary_data_meanTest_here <- summary_data_meanTest[-log10(summary_data_meanTest$padj) < 5000000, ]
+
+# read in dataset and subset on germ cells and F1 samples
+data_total_expression <- readRDS("./Data/processed/sce_merged_new.rds")
+data_total_expression <- data_total_expression[,data_total_expression$CellType %in% c("ES", "RS", "SC", "SG")]
+data_total_expression <- data_total_expression[,data_total_expression$Library %in% c("Sample5", "Sample6")]
+
+# read in interpolated ASE trajectories from scDALI for clustering
+gp_results_total <- readRDS("./Data/processed/GP_fits.rds")
+names_gp_results <- readRDS("./Data/processed/Dali_full_results.rds")
+names_gp_results <- rownames(names_gp_results[p.adjust(names_gp_results$dali_pval_polynomial) < 0.01,])
+names(gp_results_total) <- names_gp_results
+gp_results_total <- gp_results_total[!unlist(lapply(gp_results_total, function(x){any(is.na(x))}))]
+```
+
+We first plot the allelic ratios of an example gene that shows dynamic imbalance over pseudotime. 
+
+```{r sss}
+gene = "Ddt"
+plot_gene_GP(data_total_expression, gene, gp_results_total[gene][[1]], remove_zero = T)
+
+ggsave("./Plots/Figure2/Fig2_A.pdf", width = 10, height = 7)
+```
+
+```{r sss}
+# First, we visualize cell types across the pseudotemporal axis
+data_total_expression_here <- data_total_expression
+
+data.frame(
+  Pseudotime = data_total_expression_here$Pseudotime, 
+  CellType = data_total_expression_here$CellType
+) %>%
+  ggplot(aes(x = Pseudotime, fill = fct_rev(CellType))) + geom_density(adjust = 5) + 
+  theme_classic() + scale_fill_manual(values = colour_vector) + 
+  # scale_y_continuous(limits = c(0, 0.075), expand = c(0, 0)) + 
+  scale_y_continuous(expand = c(0, 0), trans = "sqrt") + 
+  scale_x_continuous(expand = c(0, 0)) + 
+  theme(text = element_text(size = 30), legend.position = "None", 
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank()) + 
+  ylab("") + xlab("")
+
+ggsave("./Plots/Figure2/Fig2_A_celdensity.pdf", width = 10, height = 2)
+
+# now, we partition the pseudotime into intervals of constant length
+df_here <- data.frame(
+  Pseudotime = data_total_expression_here$Pseudotime, 
+  CellType = data_total_expression_here$CellType
+)
+
+n_partitions <- 100
+pseudotime_here <- data_total_expression_here$Pseudotime
+pseudotime_here <- pseudotime_here - min(pseudotime_here)
+pseudotime_here <- pseudotime_here / max(pseudotime_here) # between 0 and 1
+intervals <- c(0, 1:n_partitions / n_partitions)
+
+ct_annotation_pt  <- do.call("cbind", 
+                               lapply(1:n_partitions, function(i){
+                                 p_lower <- intervals[i]
+                                 p_upper <-  intervals[i + 1]
+                                 ix <- which(p_lower <= pseudotime_here & pseudotime_here <= p_upper)
+                                 names(sort(table(df_here[ix, ]$CellType), decreasing = T))[[1]]
+                               }))
+
+coordinates_x <- cumsum(rev(table(ct_annotation_pt)))
+coordinates_xmin <- c(0, coordinates_x[1:3])
+coordinates_xmax <- c(coordinates_x[1:4])
+
+data.frame("xmin" = coordinates_xmin, "xmax" = coordinates_xmax, "ymin" = 0, "ymax" = 1, celltype = names(coordinates_x)) %>%
+  ggplot(aes(xmin = xmin, ymin = ymin, xmax = xmax, ymax = ymax, fill = celltype )) + geom_rect(col = "black", size =  2) + 
+  scale_fill_manual(values = colour_vector) + theme_void() + theme(legend.position = "None")
+ggsave("./Plots/Figure2/Fig2_A_arrow.pdf", width = 10, height = 0.2)
+
+```
+
+As an example, we create a sample function from a gaussian process by sampling from a binomial distribution with rate parameters drawn from a gaussian process prior. We then visualize the persistent and dynamic allelic components from the resulting functions. 
+
+```{r fig3_a}
+
+set.seed(123)
+
+# define rbf kernel and generate covariance matrix
+make_rbf_kernel <- function(covariate, length_scale = 1, scale_factor = 1){
+  sig = scale_factor
+  l = length_scale
+  rbf_function = function(x_1, x_2){
+    (sig ** 2) * exp( - ((x_1 - x_2) ** 2) / (2 * l)) # vectorized in one argument
+  }
+  do.call("cbind", lapply(covariate, function(x){rbf_function(covariate, x)}))
+}
+k = 50
+cov_matrix <- make_rbf_kernel(1:k / k, length_scale = 0.05)
+
+# sample latent mean vector from the kernel matrix
+latent_mu <- mvtnorm::rmvnorm(n = 1, mean = rep(0, k), sigma = cov_matrix)
+# logit transform to project rate int [0, 1]
+latent_mu <- (1 / (1 + exp(-latent_mu)))
+
+# sample binomial data
+n_reads = 30
+samples <- unlist(lapply(rep(latent_mu, 10), function(x){VGAM::rbetabinom(1, n_reads, x)}))
+
+# assemble simulated data and add persistent imbalance of 0.1
+data_test <- data.frame(
+  ASE = samples / n_reads + 0.1,
+  Index = rep(1:50, 10),
+  Latent_ASE = rep(latent_mu, 10) + 0.1
+)
+
+data_test <- data_test[order(data_test$Index), ]
+data_test$CellType <- c(rep("SG", 50), rep("SC", 200), rep("RS", 100), rep("ES", 150))
+
+colour_vector <- c("SG" = "#046735",
+                   "SC" = "#D31281",
+                   "RS" = "#282B69",
+                   "ES" = "grey60")
+
+ggplot(data_test, aes(Index, ASE)) +
+  ylim(c(0, 1)) + geom_jitter(aes(col = CellType), width = 1, height = 0.1, size = 1) + 
+  scale_color_manual(values = colour_vector) + 
+  geom_line(aes(Index, Latent_ASE), color = "red", size = 2) + 
+  #geom_ribbon(aes(x = pt_here, ymin = latent_var_lower, ymax = latent_var_upper), 
+  #            color = "green", alpha = 0.2) + 
+  theme_classic() +
+  geom_hline(yintercept = mean(data_test$ASE), col = "black", linetype = "dashed", size = 2) + 
+  geom_hline(yintercept = 0.5, linetype = "dashed") + 
+  xlab("Pseudotime") + ylab("Allelic Ratio") + 
+  scale_y_continuous(breaks = c(0, 0.5, 1), limits = c(0, 1), expand = c(0, 0)) + 
+  scale_y_continuous(breaks = c(0, 0.5, 1), limits = c(0, 1), expand = c(0, 0)) + 
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank()) + 
+  theme(text = element_text(size=30)) + theme(legend.position = "None")
+
+ggsave("./Plots/Figure2/Fig2_B.pdf", width = 15, height = 7.5)
+
+```
+
+Now we quantify the genes with static and dynamic ASE as derived from scDALI. (../Analysis/scdali_fits.R)
+
+```{r }
+
+library(VennDiagram)
+
+venn1 <- rownames(summary_data_meanTest[p.adjust(summary_data_meanTest$pval) < 0.01, ])
+venn2 <- rownames(summary_data_meanTest[p.adjust(summary_data_meanTest$pval_dali_discrete) < 0.01, ])
+venn3 <- rownames(summary_data_meanTest[p.adjust(summary_data_meanTest$pval_dali_polynomial) < 0.01, ])
+
+# Chart
+venn <- venn.diagram(
+  x = list(venn1, venn3),
+  category.names = c("Static" , "Dynamic"),
+  filename = NULL,
+  output=F,
+  
+  # Output features
+  imagetype="png" ,
+  height = 480 , 
+  width = 480 , 
+  resolution = 300,
+  compression = "lzw",
+  
+  # Circles
+  lwd = 2,
+  fill = c("white", "grey"),
+  
+  # Numbers
+  cex = 2,
+  fontface = "bold",
+  fontfamily = "sans",
+)
+
+dev.off()
+pdf("~/Desktop/Projects/ASE_Spermatogenesis_Paper/Plots/Figure2/Fig2_B_venn.pdf")
+grid.draw(venn)
+dev.off()
+
+# for supplement: compare detected dynamic genes between continuous and discrete modelling
+dd <- data_test %>% group_by(CellType) %>% summarize(mean = mean(Latent_ASE)) %>% data.frame()
+rownames(dd) <- dd$CellType
+
+# make a schematic as in the main figure
+data_test %>% add_column(celltype_ase = dd[data_test$CellType, ]$mean) %>%
+ggplot(aes(Index, ASE)) +
+  ylim(c(0, 1)) + geom_jitter(aes(col = CellType), width = 1, height = 0.1, size = 3) + 
+  scale_color_manual(values = colour_vector) + 
+  theme_classic() +
+  geom_step(aes(y = celltype_ase), linetype = "dashed", col = "red", size = 4) + 
+  geom_hline(yintercept = 0.5, linetype = "dashed") + 
+  xlab("Pseudotime") + ylab("Allelic Ratio") + 
+  scale_y_continuous(breaks = c(0, 0.5, 1), limits = c(0, 1), expand = c(0, 0)) + 
+  scale_y_continuous(breaks = c(0, 0.5, 1), limits = c(0, 1), expand = c(0, 0)) + 
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank()) + 
+  theme(text = element_text(size=50)) + theme(legend.position = "None") + 
+  ggtitle("Cluster-based cell type definition")
+ggsave("./Plots/FigureS2/FigS2_5_schematic.pdf")
+
+# plot a venn diagram showing the overlap between detected genes
+venn <- venn.diagram(
+  x = list(venn1, venn2, venn3),
+  category.names = c("Static" , "Cell Type-specific", "Dynamic"), 
+  filename = NULL,
+  output = F,
+  
+  # Output features
+  imagetype="pdf" ,
+  height = 480 , 
+  width = 480 , 
+  resolution = 3000,
+  compression = "lzw",
+  
+  # Circles
+  lwd = 4,
+  fill = c("white", "grey", "red"),
+  
+  # Numbers
+  cex = 4,
+  fontface = "bold",
+  fontfamily = "sans"
+)
+
+dev.off()
+pdf("~/Desktop/Projects/ASE_Spermatogenesis_Paper/Plots/FigureS2/FigS2_5_venn.pdf")
+grid.draw(venn)
+dev.off()
+
+rbind(
+  data.frame(
+    Effect = "static", 
+    gene = venn1
+  ), 
+  data.frame(
+    Effect = "cell type", 
+    gene = venn2 
+  ), 
+  data.frame(
+    Effect = "dynamic", 
+    gene = venn3 
+  )
+) %>% mutate(Effect = factor(Effect, levels = c("static", "cell type", "dynamic"))) %>%
+  ggplot(aes(x = Effect, fill = Effect)) + geom_bar(stat = "count") + 
+  scale_fill_manual(values = c("grey", "darkgrey", "red")) + 
+  theme_paper(textsize = 50) + ylab("Number of genes") + xlab("")
+ggsave("~/Desktop/Projects/ASE_Spermatogenesis_Paper/Plots/FigureS2/FigS2_6_number_of_effects.pdf")
+dev.off()
+
+## Plot some examples for the supplement
+## find genes with only static allelic imbalance
+genes_to_plot <- summary_data_meanTest[summary_data_meanTest$pval_dali_polynomial > 0.5, ]
+head(genes_to_plot[order(genes_to_plot$ase), ], n = 100)
+gene = "Fam92a"
+plot_gene_GP(data_total_expression, gene, gp_results_total[gene][[1]], remove_zero = T, textsize = 50)
+ggsave(paste0("./Plots/FigureS2/FigS2_4_sample_genes_", gene, ".pdf"))
+
+## find genes with dynamic allelic imbalance that can't be found by static test
+genes_to_plot <- summary_data_meanTest[summary_data_meanTest$padj > 0.5, ]
+head(genes_to_plot[order(genes_to_plot$pval_dali_polynomial), ], n = 100)
+gene = "Cypt4"
+plot_gene_GP(data_total_expression, gene, gp_results_total[gene][[1]], remove_zero = T, textsize = 50) + 
+  geom_segment(aes(x = 0.75, y = 0.10, xend = 0.85, yend = 0.20), arrow = arrow(length = unit(0.5, "cm")), size = 2, col = "darkred")
+ggsave(paste0("./Plots/FigureS2/FigS2_4_sample_genes_", gene, ".pdf"))
+
+## find genes with dynamic allelic imbalance that can't be found by static test
+genes_to_plot <- summary_data_meanTest[summary_data_meanTest$padj > 0.5, ]
+head(genes_to_plot[order(genes_to_plot$pval_dali_polynomial), ], n = 100)
+gene = "Riiad1"
+plot_gene_GP(data_total_expression, gene, gp_results_total[gene][[1]], remove_zero = T, textsize = 50) + 
+    geom_segment(aes(x = 0.25, y = 0.43, xend = 0.35, yend = 0.38), arrow = arrow(length = unit(0.5, "cm")), size = 2, col = "darkred") + 
+    geom_segment(aes(x = 0.75, y = 0.15, xend = 0.85, yend = 0.25), arrow = arrow(length = unit(0.5, "cm")), size = 2, col = "darkred")
+ggsave(paste0("./Plots/FigureS2/FigS2_4_sample_genes_", gene, ".pdf"))
+
+```
+
+We next cluster the dynamic trajectories from the scDALI models and compare the clustering to the clustering derived from total expression trajectories.
+
+```{r heatmap}
+
+# Functions to compute the sum of squares distance to look at the quality of clustering
+calc_SS <- function(df) sum(as.matrix(dist(df)^2)) / (2 * nrow(df))
+calc_SS_partition <- function(df, clusters){
+  data_here = lapply(unique(clusters), function(cl){
+    dd = df[clusters == cl, ]
+    calc_SS(dd)
+  })
+  sum(unlist(data_here))
+}
+
+# Read and smooth data
+# we first generate a smoothed total gene expression matrix from the logcounts-matrix
+n_partitions = 100
+pseudotime_here <- data_total_expression$Pseudotime
+pseudotime_here <- pseudotime_here - min(pseudotime_here)
+names(pseudotime_here) <- colnames(data_total_expression)
+max_pseudotime <- max(pseudotime_here)
+interval_width = max(max_pseudotime) / 50
+pseudotime_partition <- 1:n_partitions * max(max_pseudotime) / n_partitions
+
+expression_smoothed <- do.call("cbind", 
+lapply(pseudotime_partition, function(p){
+ p_lower <- max(0, p - interval_width)
+ p_upper <- min(max_pseudotime, p + interval_width)
+ ix <- which(p_lower <= pseudotime_here & pseudotime_here <= p_upper)
+ a = rowMeans(logcounts(data_total_expression[,names(ix)]))
+ return(a)
+}))
+
+# now we generate the same matrix for the smoothed allelic rates
+gp_latent_matrix <- t(do.call("cbind", lapply(gp_results_total, function(x){x$posterior_mean})))
+gp_latent_matrix <- gp_latent_matrix[,order(data_total_expression$Pseudotime)]
+rownames(gp_latent_matrix) <- names(gp_results_total)
+colnames(gp_latent_matrix) <- names(pseudotime_here[order(pseudotime_here)])
+
+dynamic_cis_effects <- rownames(summary_data_meanTest[p.adjust(summary_data_meanTest$pval_dali_polynomial) < 0.01, ])
+dynamic_cis_effects <- intersect(dynamic_cis_effects, rownames(gp_latent_matrix))
+cell_use <- 1:ncol(gp_latent_matrix) %% 10 == 0
+gp_latent_matrix <- gp_latent_matrix[dynamic_cis_effects, ]
+
+ase_smoothed <- do.call("cbind", 
+lapply(pseudotime_partition, function(p){
+ p_lower <- max(0, p - interval_width)
+ p_upper <- min(max_pseudotime, p + interval_width)
+ ix <- which(p_lower <= pseudotime_here & pseudotime_here <= p_upper)
+ a = rowMeans(gp_latent_matrix[,names(ix)])
+ return(a)
+}))
+
+# z-score the trajectories
+ase_smoothed <- t(scale(t(ase_smoothed)))
+
+## compute clusters on scaled gp fits for ASE
+clusterings <- lapply(1:30, function(i){
+  cutree(hclust(dist(ase_smoothed)), k = i)}) # for paper, n = 30
+
+# perform hierarchical clustering for a range of cluster numbers and pick a reasonable number
+SSDs <- lapply(clusterings, function(x){calc_SS_partition(ase_smoothed, x)}) # 7 looks ok
+ggplot(data.frame(Clusters = 1:30, SSD = unlist(SSDs)), aes(Clusters, SSD)) + geom_point() + geom_line() + theme_classic() + 
+  theme(text = element_text(size = 20)) + geom_hline(yintercept = SSDs[[7]], col = "red", linetype = "dashed") + 
+  ggtitle("ASE cluster choice")
+
+clustering_choose <-  clusterings[[7]]
+
+## compute clusters on scaled expression patterns, for genes with dynamic effects
+expression_smoothed_cut <- expression_smoothed[rownames(ase_smoothed), ]
+expression_smoothed_scaled <- t(scale(t(expression_smoothed_cut)))
+
+clusterings_expression <- lapply(1:30, function(i){cutree(hclust(dist(expression_smoothed_scaled)), k = i)})
+SSDs_expression <- lapply(clusterings_expression, function(x){calc_SS_partition(expression_smoothed_scaled, x)}) # 7 looks ok
+
+ggplot(data.frame(Clusters = 1:30, SSD = unlist(SSDs_expression)), aes(Clusters, SSD)) + geom_point() + geom_line() + theme_classic() + 
+  theme(text = element_text(size = 20)) + geom_hline(yintercept = SSDs_expression[[7]], col = "red", linetype = "dashed") + 
+  ggtitle("Expression cluster choice")
+
+# now rename clusters so they appear in order
+cluster_conversion <- c(3, 1, 2, 6, 7, 5, 4) # position x will be new number y
+clusterings_reordered <- as.numeric(cluster_conversion[clustering_choose])
+
+clustering_df <- data.frame(
+  Cluster_Expression = clusterings_expression[[7]],
+  Cluster_ASE = clusterings_reordered
+)
+
+clustering_df <- clustering_df[order(clustering_df$Cluster_ASE, clustering_df$Cluster_Expression), ]
+
+# generate confusion matrices between ase and expression clustering
+confusion_matrix <- table(clustering_df[,c(1,2)])
+row_sums <- rowSums(confusion_matrix)
+col_sums <- colSums(confusion_matrix)
+confusion_matrix_expected <- row_sums %o% col_sums / sum(confusion_matrix)
+
+ggplot(data.frame(confusion_matrix), aes(Cluster_Expression, Cluster_ASE, fill = Freq)) + 
+  geom_tile() + 
+  scale_fill_gradientn(colours = c("white", "red")) + theme_classic() + theme(text = element_text(size = 40)) + 
+  geom_text(aes(label = Freq), size = 15)
+ggsave("./Plots/FigureS2/FigS2_7_confusion_matrix.pdf")
+
+ggplot(data.frame(confusion_matrix / confusion_matrix_expected), aes(Cluster_Expression, Cluster_ASE, fill = Freq)) + geom_tile() + 
+  scale_fill_gradientn(colours = c("white", "red")) + theme_classic() + theme(text = element_text(size = 40)) + 
+  geom_text(aes(label = round(Freq, 2)), size = 15)
+ggsave("./Plots/FigureS2/FigS2_7_confusion_matrix_enrichment.pdf")
+
+# now plot the scaled expression and allelic trajectories
+clustering_df <- clustering_df[order(clustering_df$Cluster_Expression),]
+pdf("./Plots/FigureS2/FigS2_7_expression_heatmap.pdf")
+pheatmap::pheatmap(expression_smoothed_cut[rownames(clustering_df), ],
+                   cluster_cols = F, cluster_rows = F, show_rownames = F, show_colnames = F, 
+                   annotation_row = clustering_df, scale = "row",
+                   gaps_row = cumsum(table(clustering_df$Cluster_Expression)), 
+                   color = rev(RColorBrewer::brewer.pal(name = "RdBu", n = 10)))
+dev.off()
+
+# now plot the scaled expression and allelic trajectories
+colfunc <- colorRampPalette(c("black", "white", "chocolate"))
+clustering_df <- clustering_df[order(clustering_df$Cluster_ASE), ]
+
+colnames(ase_smoothed) <- paste0("Cell_", 1:100)
+# rownames(column_annotation_collapsed) <- paste0("Cell_", 1:100)
+
+pdf("./Plots/Figure2/Fig2_C.pdf")
+pheatmap::pheatmap(ase_smoothed[rownames(clustering_df[order(clustering_df$Cluster_ASE), ]), ],
+                   cluster_cols = F, cluster_rows = F, show_rownames = F, show_colnames = F, 
+                   annotation_row = clustering_df, 
+                   scale = 'row', 
+                   gaps_row = cumsum(table(clustering_df$Cluster_ASE)),
+                   color = colfunc(10))
+dev.off()
+
+# generate column annotation with total gene expression and protamine expression
+colnames(gp_latent_matrix) <- paste0("Cell_", 1:ncol(gp_latent_matrix))
+column_annotation = data.frame(
+  Pseudotime = data_total_expression$Pseudotime, 
+  Total_Expression = log10(colSums(counts(data_total_expression)) + 1), 
+  Protamine_Expression = as.numeric(log(counts(data_total_expression["Tnp2", ]) + 1))
+)
+column_annotation <- column_annotation[order(column_annotation$Pseudotime), ]
+rownames(column_annotation) <- colnames(gp_latent_matrix)
+
+column_annotation_collapsed <- data.frame(
+  t(make_pseudotime_smooth(t(column_annotation), column_annotation$Pseudotime, n_partitions = 100))
+)
+
+column_annotation_collapsed_2 <- column_annotation_collapsed
+
+scale_min_max <- function(x){
+  return((x - min(x)) / (max(x) - min(x)))
+}
+
+column_annotation_collapsed_2$Total_Expression <- scale_min_max(column_annotation_collapsed_2$Total_Expression)
+column_annotation_collapsed_2$Protamine_Expression <-  scale_min_max(column_annotation_collapsed_2$Protamine_Expression)
+
+ggplot(data.frame(column_annotation_collapsed_2)) + 
+  geom_smooth(aes(Pseudotime, Total_Expression), method = "loess", span = 0.2, col = "grey", size = 2) + 
+  geom_smooth(aes(Pseudotime, Protamine_Expression), method = "loess", span = 0.2, col = "#3cb371", size = 2) + 
+  theme_classic() + 
+  theme(text = element_text(size = 30), 
+        axis.ticks.x = element_blank(), 
+        axis.text.x = element_blank()) + 
+  scale_x_continuous(expand = c(0, 0)) +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_y_continuous(breaks = c(0, 1), limits = c(-0.05, 1.1)) + 
+  xlab("") + ylab("") + 
+  geom_text(x = 40, y = 0.9, label = "Total expression", size = 10, col = "grey") + 
+  geom_text(x = 80, y = 0.1, label = "Protamine expression", size = 10, col = "#3cb371") + 
+  theme(plot.margin=grid::unit(c(0.1,0.1,0.1,0.1), "mm"))
+
+ggsave("./Plots/Figure3/Fig3_Top_of_ase_matrix.pdf", width = 10, height = 1.5)
+
+```
+
+```{ss}
+
+##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### #####
+## Here, we analyze a compendium of genomic and epigenomic features wrt their association with
+## dynamic genetic effects. Derivation of the features is done in ./Analysis/Figure2_RForest_Compile_Features.R
+
+library(randomForest)
+require(pROC)
+
+rf_cv_auc <- function(data_fit, folds = 5){
+  n_chunks <- floor(nrow(data_fit) / folds)
+  data_fit <- data_fit[sample(nrow(data_fit)), ]
+  df_folds <- split(data_fit, (seq(nrow(data_fit))-1) %/% n_chunks)
+  print(length(df_folds))
+  lapply(1:folds, function(i){
+    train_data <- do.call('rbind', df_folds[-i])
+    test_data <- df_folds[[i]]
+    rf <- randomForest(
+      objective ~ .,
+      data = train_data,
+      importance = T, 
+    )
+    prediction <- stats::predict(rf, test_data, type = "vote")
+    rf.roc <- roc(test_data$objective, prediction[,2])
+    return(auc(rf.roc))
+  })
+}
+
+genes_test <- readRDS("./Data/processed/genes_test.rds")
+all_genes <- rownames(genes_test)
+
+genes_test <- readRDS("./Data/processed/genes_test.rds")
+genes_save <- rownames(genes_test)
+genes_test <- data.frame(apply(genes_test, 2, as.numeric))
+rownames(genes_test) <- genes_save
+genes_test <- genes_test[!is.na(rownames(genes_test)), ]
+genes_test <- genes_test[!is.na(genes_test$chromosome), ]
+genes_test <- genes_test[!is.na(genes_test$BF_trans), ]
+genes_test <- genes_test[!is.na(genes_test$BF_cis_dynamic), ]
+genes_test <- genes_test[!is.na(genes_test$BF_trans_static), ]
+genes_test <- genes_test[!is.na(genes_test$BF_trans_dynamic), ]
+
+genes_test$BF_cis_static <- genes_test$NLL_null - genes_test$NLL_alt
+genes_test[genes_test$NLL_null < 0 | genes_test$NLL_alt < 0, ]$BF_cis_static <- 0
+genes_test[genes_test$BF_cis_static < 0, ]$BF_cis_static <- 0
+
+#BF_cutoff <- 10
+#BF_cutoff_lower <- 2
+pval_cutoff <- 2
+pval_cutoff_lower <- 1
+# genes_cis_static <- rownames(genes_test[genes_test$BF_cis_static > 7, ])
+# genes_cis_dynamic <- rownames(genes_test[genes_test$BF_cis_dynamic > 7, ])
+genes_cis_static <- rownames(genes_test[-log10(p.adjust(genes_test$pval)) > pval_cutoff & -log10(p.adjust(genes_test$dali_pval_polynomial)) < pval_cutoff_lower, ])
+genes_cis_dynamic <- rownames(genes_test[-log10(p.adjust(genes_test$dali_pval_polynomial)) > pval_cutoff, ])
+#genes_cis_static <- rownames(genes_test[-log10(p.adjust(genes_test$pval)) > 2, ])
+#genes_cis_dynamic <- rownames(genes_test[-log10(p.adjust(genes_test$dali_pval_polynomial)) > 2, ])
+
+genes_cis <- union(genes_cis_static, genes_cis_dynamic)
+
+##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### 
+##### COMPARISON CIS GENERAL GENES
+##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### 
+
+data_fit <- readRDS("./Data/processed/all_features.rds")
+
+data_fit[is.na(data_fit)] <- 0
+data_fit <- data.frame(scale(data_fit))
+
+# comparison: cis general
+data_fit <- data_fit[all_genes, ]
+data_fit$objective <- rownames(data_fit) %in% genes_cis
+data_fit$objective <- factor( data_fit$objective )
+data_fit <- data_fit[!is.na(data_fit$objective), ]
+table(data_fit$objective)
+
+set.seed(1234)
+rf <- randomForest(
+  objective ~ .,
+  data=data_fit,
+  importance = T, 
+)
+
+rf.roc <- roc(data_fit$objective, rf$votes[,2])
+auc_training <- auc(rf.roc)
+auc_test <- rf_cv_auc(data_fit, folds = 5)
+
+importance_df <- data.frame(rf$importance)
+importance_df$Feature <- rownames(importance_df)
+importance_df <- importance_df[order(importance_df$MeanDecreaseAccuracy, decreasing = T), ]
+
+auc_training_cis <- auc_training
+auc_test_cis <- auc_test
+importance_df_cis <- importance_df
+
+##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### 
+##### COMPARISON CIS DYNAMIC GENES
+##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### ##### 
+
+data_fit <- readRDS("./Data/processed/all_features.rds")
+
+# data_fit[is.na(data_fit)] <- 0
+# data_fit <- data_fit[genes_cis, ]
+# data_fit_test <- data.frame(scale(data.frame(data_fit)))
+# data_fit_test$covariate <- rownames(data_fit_test) %in% genes_cis_dynamic
+ggplot(data_fit, aes(x = objective, y = VAR_expression_level)) + geom_violin() + geom_boxplot() + ggpubr::stat_compare_means()
+
+data_fit[is.na(data_fit)] <- 0
+data_fit <- data.frame(scale(data_fit))
+
+# comparison: dynamic cis effects
+#data_fit <- data_fit[genes_cis, ]
+data_fit$objective <- rownames(data_fit) %in% genes_cis_dynamic
+data_fit$objective <- factor( data_fit$objective )
+data_fit <- data_fit[!is.na(data_fit$objective), ]
+table(data_fit$objective)
+
+set.seed(1234)
+rf <- randomForest(
+  objective ~ .,
+  data=data_fit,
+  importance = T, 
+)
+
+rf.roc <- roc(data_fit$objective, rf$votes[,2])
+auc_training <- auc(rf.roc)
+auc_test <- rf_cv_auc(data_fit, folds = 5)
+
+importance_df <- data.frame(rf$importance)
+importance_df$Feature <- rownames(importance_df)
+importance_df <- importance_df[order(importance_df$MeanDecreaseAccuracy, decreasing = T), ]
+
+auc_training_cis_dynamic <- auc_training
+auc_test_cis_dynamic <- auc_test
+importance_df_cis_dynamic <- importance_df
+
+####### ####### ####### ####### ####### ####### ####### ####### ####### ####### ####### ####### ####### ####### ####### ####### ####### 
+## Plotting 
+####### ####### ####### ####### ####### ####### ####### ####### ####### ####### ####### ####### ####### ####### ####### ####### ####### 
+
+# First plot all AUCs of all comparisons together
+
+all_ucs_test <- data.frame(
+  "AllCis" = unlist(auc_test_cis), 
+  "DynamicCis" = unlist(auc_test_cis_dynamic)
+) %>% pivot_longer(-c())
+
+all_ucs_test_means <- all_ucs_test %>% dplyr::group_by(name) %>%
+  summarise(value = mean(value)) %>%
+  add_column(col = "AUC_CV")
+
+all_training_aucs <- data.frame(
+  "AllCis" = as.numeric(unlist(auc_training_cis)), 
+  "DynamicCis" = as.numeric(unlist(auc_training_cis_dynamic))
+) %>% pivot_longer(-c()) %>%
+  add_column(col = "AUC_train")
+
+rbind(all_ucs_test_means, all_training_aucs) %>%
+  ggplot(aes(x = name, y = value, fill = col)) + 
+  geom_bar(stat = "identity", position = "dodge")  + 
+  scale_y_continuous(limits = c(0, 1), expan = c(0, 0)) + 
+  scale_fill_manual(values = c("grey", "black")) + 
+  theme_classic() + 
+  xlab("") + ylab("") + 
+  theme(text = element_text(size = 30)) + 
+  ggtitle("Model performance") + 
+  geom_hline(col = "red", linetype = "dashed", yintercept = 0.5)
+
+# Now we plot feature importances for the individual models
+# first cis effects
+
+plot_df_1 <- importance_df_cis %>% add_column(Effect = "General") %>% 
+  mutate(Feature = gsub("^VAR_", "", Feature)) %>%
+  mutate(Feature = gsub("^evolution_|^structural_|^REGULATION_", "", Feature)) %>%
+  arrange(MeanDecreaseAccuracy) %>% mutate(Feature = factor(Feature, levels = reorder(Feature, MeanDecreaseAccuracy)))
+plot_df_2 <- importance_df_cis_dynamic %>% 
+  mutate(Feature = gsub("^VAR_", "", Feature)) %>%
+  mutate(Feature = gsub("^evolution_|^structural_|^REGULATION_", "", Feature)) %>%
+  add_column(Effect = "Dynamic")
+
+rbind(plot_df_1, plot_df_2) %>%
+  ggplot(aes(Feature, MeanDecreaseAccuracy, col = Effect)) + 
+    geom_point(size = 3) + coord_flip() + ylim(-0.001, 0.015) + 
+    geom_hline(yintercept = 0, linetype = "dashed") + 
+    ggtitle("Predictors of Cis effects") + 
+    theme_classic() + 
+    xlab("") + 
+    theme(text = element_text(size=30)) + 
+    scale_color_manual(values = c("darkred", "darkgrey"))
+
+# reduced plots
+plot_df_1 <- importance_df_cis %>% add_column(Effect = "General") %>% 
+  mutate(Feature = gsub("^VAR_", "", Feature)) %>%
+  mutate(Feature = gsub("^evolution_|^structural_|^REGULATION_", "", Feature)) %>%
+  arrange(MeanDecreaseAccuracy) %>% mutate(Feature = factor(Feature, levels = reorder(Feature, MeanDecreaseAccuracy)))
+plot_df_2 <- importance_df_cis_dynamic %>% 
+  mutate(Feature = gsub("^VAR_", "", Feature)) %>%
+  mutate(Feature = gsub("^evolution_|^structural_|^REGULATION_", "", Feature)) %>%
+  add_column(Effect = "Dynamic")
+
+features_show <- setNames(importance_df_cis$MeanDecreaseAccuracy + importance_df_cis_dynamic[rownames(importance_df_cis), ]$MeanDecreaseAccuracy, 
+                          rownames(importance_df_cis))
+features_show <- names(sort(features_show, decreasing = T)[1:12])
+
+# convert_names <- setNames(c("Exp. Level", "PhastCons (exon)", "PhyloP (exon)", "%SNP (exon)", "3' UTR length", "%SNP 3' UTR", "#Exons", 
+#                             "Exp. Variability (inter-celltype)", "Exp. Variability (intra-celltype)", "5' UTR length", "%SNP (5' UTR)", "Gene Length"), 
+#                           c("VAR_expression_level", "VAR_evolution_phastcons_exon", "VAR_evolution_phylop_exon", "VAR_evolution_snpdensity_F1_exon", 
+#                             "VAR_structural_threeUTRlength", "VAR_evolution_snpdensity_F1_threeUTR", "VAR_structural_exon_number",
+#                             "VAR_expression_variability_pre_celltype", "VAR_expression_variability_post_celltype", "VAR_structural_fiveUTRlength", 
+#                             "VAR_evolution_snpdensity_F1_fiveUTR", "VAR_structural_gene_length"))
+
+convert_names <- c(
+  "VAR_evolution_phylop_intron" = "PhyloP (intron)", 
+  "VAR_promoter_hasINR" = "has INR motif", 
+  "VAR_structural_exon_proportion" = "% Exon of Gene", 
+  "VAR_REGULATION_has_testis_specific_promoter" = "has testis specific promoter", 
+  "VAR_expression_isHousekeeper" = "is housekeeper", 
+  "VAR_REGULATION_has_tissue_shared_promoter" = "has tissue shared promoter", 
+  "VAR_promoter_hasTATA" = "has TATA box", 
+  "VAR_structural_ExonGC" = "%GC (exon)", 
+  "VAR_promoter_has_CpG" = "has promoter CpG", 
+  "VAR_REGULATION_n_testis_specific_active_enhancers" = "# testis specific active enhancers", 
+  "VAR_evolution_phastcons_promoter" = "PhastCons (promoter)", 
+  "VAR_REGULATION_n_testis_specific_primed_enhancers" = "# testis specific primed enhancers", 
+  "VAR_evolution_phastcons_intron" = "PhastCons (intron)", 
+  "VAR_structural_IntronGC" = "%GC (intron)", 
+  "VAR_evolution_phylop_promoter" = "PhyloP (promoter)", 
+  "VAR_REGULATION_n_tissue_shared_active_enhancers" = "# tissue shared active enhancers", 
+  "VAR_expression_variability" = "Exp. Variability (inter-cell type)", 
+  "VAR_REGULATION_n_tissue_shared_primed_enhancers" = "# tissue-shared primed enhancers", 
+  "VAR_promoter_gcContent" = "% GC (promoter)", 
+  "VAR_evolution_snpdensity_F1_promoter" = "%SNP (promoter)", 
+  "VAR_structural_gene_length" = "Gene Length", 
+  "VAR_evolution_phastcons_three_utr" = "PhastCons (3' UTR)", 
+  "VAR_evolution_phylop_five_utr" = "PhyloP (5' UTR)", 
+  "VAR_evolution_phylop_three_utr" = "PhyloP (3' UTR)", 
+  "VAR_evolution_snpdensity_F1_intron" = "%SNP (intron)", 
+  "VAR_structural_threeUTRlength" = "3' UTR Length", 
+  "VAR_structural_exon_number" = "# Exons", 
+  "VAR_evolution_phastcons_five_utr" = "PhastCons (5' UTR)", 
+  "VAR_expression_variability_post_celltype" = "Exp. Variability (intra-cell type)", 
+  "VAR_evolution_snpdensity_F1_exon" = "%SNP (exon)", 
+  "VAR_structural_fiveUTRlength" = "5' UTR Length", 
+  "VAR_evolution_snpdensity_F1_fiveUTR" = "%SNP (5' UTR)", 
+  "VAR_evolution_snpdensity_F1_threeUTR" = "%SNP (3' UTR)", 
+  "VAR_expression_level" = "Exp. Level", 
+  "VAR_evolution_phylop_exon" = "PhyloP (exon)", 
+  "VAR_evolution_phastcons_exon" = "PhastCons (exon)"
+)
+
+plot_df_1 <- plot_df_1[features_show, ]
+plot_df_2 <- plot_df_2[features_show, ]
+
+plot_df_1$order <- 13 - 1:nrow(plot_df_1)
+plot_df_2$order <- 13 - 1:nrow(plot_df_2)
+
+plot_df_1$FeaturePretty <- convert_names[rownames(plot_df_1)]
+plot_df_2$FeaturePretty <- convert_names[rownames(plot_df_2)]
+
+features_highlight <- c("VAR_evolution_phastcons_exon", "VAR_expression_level", "VAR_evolution_snpdensity_F1_exon")
+
+features_highlight_index <- plot_df_1[features_highlight, ]$order
+
+rbind(plot_df_1, plot_df_2) %>%
+  ggplot(aes(reorder(FeaturePretty, order),  MeanDecreaseAccuracy, col = Effect)) + 
+  geom_point(size = 7) + coord_flip() + ylim(-0.001, 0.015) + 
+  ggtitle("Predictors of Cis effects") + 
+  theme_classic() + 
+  xlab("") + 
+  theme(text = element_text(size=30)) + 
+  scale_color_manual(values = c("red", "darkgrey")) + 
+  ylab("Feature Importance") + theme(legend.position = "None") + 
+  scale_y_continuous(expand = c(0, 0)) + 
+  annotate(x  = 2, y = 0.010, geom = "text", label = paste0("Cis (persistent) AUC: ", round(all_ucs_test_means[1, ]$value, digits = 3)), size = 10, col = "grey40") + 
+  annotate(x  = 1, y = 0.010, geom = "text", label = paste0("Cis (dynamic) AUC: ", round(all_ucs_test_means[2, ]$value, digits = 3)), size = 10, col = "red") + 
+  annotate(geom = "rect", xmin = features_highlight_index[[1]] + 0.4, xmax = features_highlight_index[[1]] - 0.4, ymin = 0, ymax = 0.015, 
+           col = "black", fill = "yellow", alpha = 0.1) + 
+  annotate(geom = "rect", xmin = features_highlight_index[[2]] + 0.4, xmax = features_highlight_index[[2]] - 0.4, ymin = 0, ymax = 0.015, 
+           col = "black", fill = "yellow", alpha = 0.1) + 
+  annotate(geom = "rect", xmin = features_highlight_index[[3]] + 0.4, xmax = features_highlight_index[[3]] - 0.4, ymin = 0, ymax = 0.015, 
+           col = "black", fill = "yellow", alpha = 0.1)
+ggsave("./Plots/Figure2/FeatureImportance_Cis_Reduced.pdf")
+
+# Now we plot feature importances for the individual models
+
+## Now we plot features with predictive differences
+
+data_fit <- readRDS("./Data/processed/all_features.rds")
+
+data_fit[is.na(data_fit)] <- 0
+data_fit <- data.frame(scale(data_fit))
+
+features_show <- c("VAR_evolution_phastcons_exon", "VAR_expression_level", "VAR_evolution_snpdensity_F1_exon")
+
+all_genes <- setNames(rep("None", nrow(data_fit)), rownames(data_fit))
+all_genes[genes_cis] <- "cis"
+all_genes[genes_cis_dynamic] <- "dynamic cis"
+all_genes <- factor(all_genes, levels = c("None", "cis", "dynamic cis"))
+
+df_plot <- 
+  data_fit[,features_show] %>%
+  data.frame() %>%
+  add_column(effect = all_genes) %>%
+  pivot_longer(-effect) %>%
+  mutate(name = convert_names[as.character(name)]) %>%
+  mutate(name = factor(name, levels = c("Exp. Level", "PhastCons (exon)", "%SNP (exon)"))) %>%
+  mutate(effect = factor(effect, levels = c("dynamic cis", "cis", "None")))
+
+df_plot %>%
+ ggplot(aes(x = effect, y = value)) + 
+  geom_violin(fill = "grey") +
+  stat_summary(size = 1) + 
+  # geom_boxplot(width = 0.1) +
+  facet_wrap(~name, scales = "free", nrow = 3) +
+  coord_flip() + 
+   ggpubr::stat_compare_means(comparisons = list(c("None", "cis"), c("None", "dynamic cis"), c("cis", "dynamic cis")), 
+                              label = "p.signif", coord.flip = TRUE, size = 10, method = "wilcox.test", 
+                              symnum.args = list(cutpoints = c(0, 0.001, 0.01, 0.05, 0.1, 1), symbols = c("****", "***", "**", "*", "ns"))) + 
+  theme_classic() + 
+  theme(text = element_text(size = 50)) + 
+  xlab("") + ylab("")
+ggsave("./Plots/Figure2/Fig2_CisEffectsViolin.pdf")
+
+```

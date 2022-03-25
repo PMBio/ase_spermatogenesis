@@ -1,0 +1,1016 @@
+---
+title: "Figure 1"
+author: "Jasper Panten"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "~/Desktop/Projects/ASE_Spermatogenesis_Paper_rerun/")
+```
+
+## This script reproduces the plots in Figure 1 and its supplement,
+## Quantification of cell-type specific cis- and trans-acting genetic effects on gene expression across mouse spermotogenesis using scRNA-Seq
+
+# Preprocessing of F1 dataset happens here:
+./Preprocessing_preprocess_allelic_data.R
+./Preprocessing_preprocessing_f1.R
+
+# Analysis feeding into this figure:
+./Figure1_goncalves_categorization
+./Figure1_BB_gLMM.R
+./Figure1_ASE_dimension_reduction_new.R
+
+We first define some helper functions and colors and load necessary libraries
+
+```{r load_libraries}
+
+library(ggplot2)
+library(scran)
+library(scater)
+library(viridis)
+library(pheatmap)
+library(zoo)
+library(umap)
+library(tidyverse)
+source("./Scripts/General/auxiliary.R")
+source("./Scripts/General/reuse_functions.R")
+
+colour_vector <- c("SG" = "#046735",
+                   "SC" = "#D31281",
+                   "RS" = "#282B69",
+                   "ES" = "grey60",
+                   "Sertoli" = "#643F18",
+                   "Leydig" = "#985D25",
+                   "Immune/Endothelial" = "#FFDFB2")
+
+```
+
+Now we read the allele-specific and non-allele-specific counts from a SingleCellExperiment-object as created in /Analysis/preprocessing_f1.R and
+/Analysis/preprocess_allelic_data.R
+We then plot a UMAP of the F1 mice (Sample5/6) based on MNN-batch-corrected data as computed in preprocessing_f1.R
+
+```{r read_data}
+# read pre-processed data
+data <- readRDS("./Data/processed/sce_merged_new.rds")
+```
+
+```{r plot_umap}
+# compute umap dimensionality reduction
+set.seed(12345)
+corrected <- metadata(data)$corrected[colnames(data), ]
+umap <- umap::umap(corrected)
+reducedDims(data)$UMAP <- umap$layout
+
+# create the plot
+pp <- data.frame(
+  Umap1 = reducedDims(data)$UMAP[,1],
+  Umap2 = reducedDims(data)$UMAP[,2],
+  CellType = data$CellType
+) %>% 
+ggplot(aes(Umap1, Umap2, col = CellType)) + 
+  geom_point(size = 1) +
+  scale_color_manual(values = colour_vector) + 
+  theme_tsne()
+pp
+
+ggsave("./Plots/Figure1/umap_plot.pdf", 
+       pp + theme(text = element_text(size=20)) + theme(legend.position = "None") + 
+                  xlab("") + ylab(""), width = 2, height = 4)
+```
+
+We now move to the allele-specific data. We first compute pseudo-bulks per cell type and use the classification procedure from Goncalves2012 to 
+classify genes into conserved, cis-, trans- or cis + trans-regulated. 
+
+```{r make_bulk_data}
+
+# define colors
+colours_cis_trans <- c(
+  "Conserved" =  "grey",
+  "Cis" =  "orange",
+  "Trans" =  "cyan",
+  "Cis_Trans" =  "Purple"
+)
+
+# normalize library size by scaling to total
+# size factor normalization (e.g. TMM method from DESeq2 or edgeR) would be possible but should yield very similar size factors 
+# as differential gene epression is relatively weak and balanced between strains
+normalize_sf <- function(counts){
+  col.save <- colnames(counts)
+  row.save <- rownames(counts)
+  sfs <- colSums(counts) / colSums(counts)[[1]]
+  counts <- do.call("cbind", lapply(1:ncol(counts), function(i){
+    return(counts[,i] / sfs[[i]])
+  }))
+  colnames(counts) <- col.save
+  rownames(counts) <- row.save
+  return(round(counts))
+}
+
+# make pseudobulk libraries from the same samples
+make_bulk_celltype <- function(data){
+  
+  sce_par_cur_perLibrary = data.frame(
+    "Sample1_Reference" = rowSums(counts(data[,data$Library == "Sample1"])),
+    "Sample2_Reference" = rowSums(counts(data[,data$Library == "Sample2"])),
+    "Sample3_Reference" = rowSums(counts(data[,data$Library == "Sample3"])),
+    "Sample4_Reference" = rowSums(counts(data[,data$Library == "Sample4"]))
+  )
+  
+  sce_fil_cur_perLibrary = data.frame(
+    "Sample5_Reference" = rowSums(counts_reference(data[,data$Library == "Sample5"])),
+    "Sample6_Reference" = rowSums(counts_reference(data[,data$Library == "Sample6"])),
+    "Sample5_Alternative" = rowSums(counts_alternative(data[,data$Library == "Sample5"])),
+    "Sample6_Alternative" = rowSums(counts_alternative(data[,data$Library == "Sample6"]))
+  )
+
+  genes.both <- intersect(rownames(sce_par_cur_perLibrary),
+                          rownames(sce_fil_cur_perLibrary))
+  
+  sce_par_cur_perLibrary <- sce_par_cur_perLibrary[genes.both,]
+  sce_fil_cur_perLibrary <- sce_fil_cur_perLibrary[genes.both,]
+  
+  sce_par_cur_perLibrary_norm <- normalize_sf(sce_par_cur_perLibrary)
+  sce_fil_cur_perLibrary_norm <- normalize_sf(sce_fil_cur_perLibrary)
+  
+  return(list(sce_par_cur_perLibrary_norm, sce_fil_cur_perLibrary_norm))
+}
+
+bulk_all <- make_bulk_celltype(data)
+bulk_sc <- make_bulk_celltype(data[,data$CellType == "SC"])
+bulk_rs <- make_bulk_celltype(data[,data$CellType == "RS"])
+bulk_es <- make_bulk_celltype(data[,data$CellType == "ES"])
+
+# # first: plot fold changes f1 vs parental to show dominance of cis-effects
+bulk_all <- list(
+  bulk_all[[1]][rowMeans(bulk_all[[1]]) > 100 & rowMeans(bulk_all[[2]]) > 100, ],
+  bulk_all[[2]][rowMeans(bulk_all[[1]]) > 100 & rowMeans(bulk_all[[2]]) > 100, ]
+)
+
+# logtransform and compute fold changes
+plot_fc_df <- data.frame(
+  FC_parental = log(rowMeans(bulk_all[[1]][,1:2]) + 1) - log(rowMeans(bulk_all[[1]][,3:4]) + 1),
+  FC_filial = log(rowMeans(bulk_all[[2]][,1:2]) + 1) - log(rowMeans(bulk_all[[2]][,3:4]) + 1)
+)
+
+# remove maternally inherited genes
+# fetch chromosome annotations from EnsDb.Mmusculus.v79
+chromosome_annotation <- annotate_chromosome_new(rownames(bulk_all[[1]]))
+is_maternal <- chromosome_annotation$chromosome_name %in% c("MT", "X") # mark maternally inherited genes (X chromosome + mitochondrial genome)
+
+plot_fc_df$is_mito <- is_maternal
+bulk_correlation <- cor(plot_fc_df$FC_parental[!plot_fc_df$is_mito ], plot_fc_df$FC_filial[!plot_fc_df$is_mito ])
+bulk_correlation <- round(bulk_correlation, digits = 2)
+
+ggplot(plot_fc_df, aes(FC_filial, FC_parental, col = is_mito)) + geom_point(size = 0.5) +
+  xlab("log2(F1_B6/F1_CAST)") + ylab("log2(F0_B6/F0_CAST)") +
+  coord_fixed() + labs(colour="Maternal chromosomes") + geom_abline(linetype = "dashed") +
+  scale_color_manual(values = c("grey", "red")) +
+  xlim(c(-10, 10)) + ylim(c(-10, 10)) +
+  theme_paper(textsize = 40) + 
+  annotate("text", x = -1, y = 10, label = paste0("Rho (without MT/X) = ", bulk_correlation), size = 12)
+
+ggsave("./Plots/FigureS1/FigS1_scatterplot.pdf")
+
+```
+
+We first run the categorization procedure for a pseudobulk of all germ cells. We plot the allelic fold change in the  F1 against the fold change between
+the F0s and quantify the results in a barplot. (F1 C)
+
+```{r goncalves_bulk}
+
+# grab pseudobulk data
+# sce_par_cur_perLibrary_norm <- bulk_all[[1]]
+# sce_fil_cur_perLibrary_norm <- bulk_all[[2]]
+# 
+# 
+# sce_par_cur_perLibrary_norm <- sce_par_cur_perLibrary_norm[!is_maternal, ]
+# sce_fil_cur_perLibrary_norm <- sce_fil_cur_perLibrary_norm[!is_maternal, ]
+# 
+# genes.test <- rownames(sce_par_cur_perLibrary_norm)
+
+# read results from model selection and process
+model.selection.results.bulk <- readRDS("./Data/processed/model_selection_bulk.rds")
+
+model.selection.results.bulk[,2:15] <- apply(model.selection.results.bulk[,2:15], 2, as.numeric)
+model.selection.results.bulk$chromosome <- annotate_chromosome_new(model.selection.results.bulk$Gene)$chromosome_name
+model.selection.results.bulk <- model.selection.results.bulk[!is.na(model.selection.results.bulk$chromosome), ]
+model.selection.results.bulk <- model.selection.results.bulk[!model.selection.results.bulk$chromosome %in% c("X", "MT"), ]
+model.selection.results.bulk <- model.selection.results.bulk[model.selection.results.bulk$Category != "NotConverged", ]
+model.selection.results.bulk$Category <- factor(model.selection.results.bulk$Category,
+                                                levels = c("conserved", "cis", "trans", "cis_trans"))
+
+names(colours_cis_trans) <- c("conserved", "cis", "trans", "cis_trans")
+
+# cutoff plot at logFC of 3, genes with higher lFC will be shown as triangles
+cf = 3
+model.selection.results.bulk[abs(model.selection.results.bulk$FC_filial) > cf, ]$FC_filial <- 
+  cf * sign(model.selection.results.bulk[abs(model.selection.results.bulk$FC_filial) > cf, ]$FC_filial)
+model.selection.results.bulk[abs(model.selection.results.bulk$FC_parental) > cf, ]$FC_parental <- 
+  cf * sign(model.selection.results.bulk[abs(model.selection.results.bulk$FC_parental) > cf, ]$FC_parental)
+sigsn <- !(abs(model.selection.results.bulk$FC_filial) == cf | abs(model.selection.results.bulk$FC_parental) == cf)
+model.selection.results.bulk$plot_sign <- ifelse(sigsn, "1", "2")
+
+scatter_p <- ggplot(model.selection.results.bulk, aes(FC_filial, FC_parental, col = Category)) + 
+  geom_abline(linetype = "dashed") + 
+  geom_hline(linetype = "dashed", yintercept = 0) + 
+  geom_vline(linetype = "dashed", xintercept = 0) + 
+  geom_point(size = 1, aes(shape = plot_sign)) + 
+  xlab("log2(F1_B6/F1_CAST)") + ylab("log2(F0_B6/F0_CAST)") + 
+  coord_fixed() + labs(colour="Regulatory Category") + 
+  scale_color_manual(values = colours_cis_trans) + 
+  scale_x_continuous(limits = c(-cf, cf), expand = c(0.01, 0.01)) + 
+  scale_y_continuous(limits = c(-cf, cf), expand = c(0.01, 0.01)) + 
+  theme_classic() + 
+  theme(text = element_text(size=20)) +
+  theme(panel.background = element_rect(fill = "white", colour = "black", size = 1)) + 
+  theme(legend.position = "none") + 
+  ggtitle("All celltypes") + theme(plot.title = element_text(hjust = 0.5))
+
+distribution_p <- ggplot(model.selection.results.bulk, 
+                         aes(y = 1, fill = forcats::fct_rev(Category))) + 
+  geom_bar(position = "fill", col = "black") + 
+  theme_classic() + 
+  scale_fill_manual(values = colours_cis_trans) + 
+  theme(axis.line.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.y = element_blank(), 
+        axis.title.y=element_blank()) + 
+  theme(plot.margin=unit(c(0.5, 5, 0.5, 6.5),"cm")) + 
+  theme(legend.position = "none") + 
+  xlab("")
+
+pp <- gridExtra::grid.arrange(scatter_p, distribution_p, nrow = 2, 
+                        heights=c(4,1))
+
+ggsave("./Plots/Figure1/All_cells_cistrans.pdf", pp)
+```
+
+We then produce the same plots for spermatocytes, round spermatids and elongating spermatids. (F1 D)
+
+Spermatocytes
+
+```{r goncalves_sc}
+# sce_par_cur_perLibrary_norm <- bulk_sc[[1]][rownames(bulk_all[[1]]), ]
+# sce_fil_cur_perLibrary_norm <- bulk_sc[[2]][rownames(bulk_all[[1]]), ]
+# 
+# genes.test <- rownames(sce_par_cur_perLibrary_norm)
+# 
+# disps.par.b6 <- estimateDisp(sce_par_cur_perLibrary_norm[,1:2])$tagwise.dispersion
+# names(disps.par.b6) <- rownames(sce_par_cur_perLibrary_norm)
+# disps.par.cast <- estimateDisp(sce_par_cur_perLibrary_norm[,3:4])$tagwise.dispersion
+# names(disps.par.cast) <- rownames(sce_par_cur_perLibrary_norm)
+
+model.selection.results.sc <- readRDS("./Data/processed/model_selection_sc.rds")
+
+model.selection.results.sc[,2:15] <- apply(model.selection.results.sc[,2:15], 2, as.numeric)
+model.selection.results.sc$chromosome <- annotate_chromosome_new(model.selection.results.sc$Gene)$chromosome_name
+model.selection.results.sc <- model.selection.results.sc[!is.na(model.selection.results.sc$chromosome), ]
+model.selection.results.sc <- model.selection.results.sc[!model.selection.results.sc$chromosome %in% c("X", "MT"), ]
+model.selection.results.sc <- model.selection.results.sc[model.selection.results.sc$Category != "NotConverged", ]
+model.selection.results.sc$Category <- factor(model.selection.results.sc$Category, 
+                                              levels = c("conserved", "cis", "trans", "cis_trans"))
+
+model.selection.results.sc[abs(model.selection.results.sc$FC_filial) > cf, ]$FC_filial <- 
+  cf * sign(model.selection.results.sc[abs(model.selection.results.sc$FC_filial) > cf, ]$FC_filial)
+model.selection.results.sc[abs(model.selection.results.sc$FC_parental) > cf, ]$FC_parental <- 
+  cf * sign(model.selection.results.sc[abs(model.selection.results.sc$FC_parental) > cf, ]$FC_parental)
+sigsn <- !(abs(model.selection.results.sc$FC_filial) == cf | abs(model.selection.results.sc$FC_parental) == cf)
+model.selection.results.sc$plot_sign <- ifelse(sigsn, "1", "2")
+
+scatter_p <- ggplot(model.selection.results.sc, aes(FC_filial, FC_parental, col = Category)) + 
+  geom_abline(linetype = "dashed") + 
+  geom_hline(linetype = "dashed", yintercept = 0) + 
+  geom_vline(linetype = "dashed", xintercept = 0) + 
+  geom_point(size = 0.5) + 
+  xlab("log2(F1_B6/F1_CAST)") + ylab("log2(F0_B6/F0_CAST)") + 
+  coord_fixed() + labs(colour="Regulatory Category") + 
+  scale_color_manual(values = colours_cis_trans) + 
+  scale_x_continuous(limits = c(-cf, cf), expand = c(0.01, 0.01)) + 
+  scale_y_continuous(limits = c(-cf, cf), expand = c(0.01, 0.01)) + 
+  theme_classic() + 
+  theme(text = element_text(size=20)) +
+  theme(panel.background = element_rect(fill = "white", colour = "black", size = 1)) + 
+  theme(legend.position = "none") + 
+  ggtitle("Spermatocytes") + theme(plot.title = element_text(hjust = 0.5)) + 
+  xlab("") + ylab("")
+
+distribution_p <- ggplot(model.selection.results.sc, 
+                         aes(y = 1, fill = forcats::fct_rev(Category))) + 
+  geom_bar(position = "fill", col = "black") + 
+  theme_classic() + 
+  scale_fill_manual(values = colours_cis_trans) + 
+  theme(axis.line.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.y = element_blank(), 
+        axis.title.y=element_blank()) + 
+  theme(plot.margin=unit(c(0.5, 5, 0.5, 6.5),"cm")) + 
+  theme(legend.position = "none") + 
+  xlab("")
+
+pp <- gridExtra::grid.arrange(scatter_p, distribution_p, nrow = 2, 
+                        heights=c(4,1))
+
+ggsave("./Plots/Figure1/SCs_cistrans.pdf", pp)
+
+
+```
+
+Round Spermatids
+
+```{r gonvalves_rs}
+# sce_par_cur_perLibrary_norm <- bulk_rs[[1]][rownames(bulk_all[[1]]), ]
+# sce_fil_cur_perLibrary_norm <- bulk_rs[[2]][rownames(bulk_all[[1]]), ]
+# 
+# genes.test <- rownames(sce_par_cur_perLibrary_norm)
+# 
+# disps.par.b6 <- estimateDisp(sce_par_cur_perLibrary_norm[,1:2])$tagwise.dispersion
+# names(disps.par.b6) <- rownames(sce_par_cur_perLibrary_norm)
+# disps.par.cast <- estimateDisp(sce_par_cur_perLibrary_norm[,3:4])$tagwise.dispersion
+# names(disps.par.cast) <- rownames(sce_par_cur_perLibrary_norm)
+
+model.selection.results.rs <- readRDS("./Data/processed/model_selection_rs.rds")
+
+model.selection.results.rs[,2:15] <- apply(model.selection.results.rs[,2:15], 2, as.numeric)
+model.selection.results.rs$chromosome <- annotate_chromosome_new(model.selection.results.rs$Gene)$chromosome_name
+model.selection.results.rs <- model.selection.results.rs[!is.na(model.selection.results.rs$chromosome), ]
+model.selection.results.rs <- model.selection.results.rs[!model.selection.results.rs$chromosome %in% c("X", "MT"), ]
+model.selection.results.rs <- model.selection.results.rs[model.selection.results.rs$Category != "NotConverged", ]
+model.selection.results.rs$Category <- factor(model.selection.results.rs$Category, 
+                                              levels = c("conserved", "cis", "trans", "cis_trans"))
+
+model.selection.results.rs[abs(model.selection.results.rs$FC_filial) > cf, ]$FC_filial <- 
+  cf * sign(model.selection.results.rs[abs(model.selection.results.rs$FC_filial) > cf, ]$FC_filial)
+model.selection.results.rs[abs(model.selection.results.rs$FC_parental) > cf, ]$FC_parental <- 
+  cf * sign(model.selection.results.rs[abs(model.selection.results.rs$FC_parental) > cf, ]$FC_parental)
+sigsn <- !(abs(model.selection.results.rs$FC_filial) == cf | abs(model.selection.results.rs$FC_parental) == cf)
+model.selection.results.rs$plot_sign <- ifelse(sigsn, "1", "2")
+
+scatter_p <- ggplot(model.selection.results.rs, aes(FC_filial, FC_parental, col = Category)) + 
+  geom_abline(linetype = "dashed") + 
+  geom_hline(linetype = "dashed", yintercept = 0) + 
+  geom_vline(linetype = "dashed", xintercept = 0) + 
+  geom_point(size = 0.5) + 
+  xlab("log2(F1_B6/F1_CAST)") + ylab("log2(F0_B6/F0_CAST)") + 
+  coord_fixed() + labs(colour="Regulatory Category") + 
+  scale_color_manual(values = colours_cis_trans) + 
+  scale_x_continuous(limits = c(-cf, cf), expand = c(0.01, 0.01)) + 
+  scale_y_continuous(limits = c(-cf, cf), expand = c(0.01, 0.01)) + 
+  theme_classic() + 
+  theme(text = element_text(size=20)) +
+  theme(legend.position = "none") + 
+  theme(panel.background = element_rect(fill = "white", colour = "black", size = 1)) + 
+  xlab("") + ylab("") + 
+  ggtitle("Round Spermatids") + theme(plot.title = element_text(hjust = 0.5))
+
+distribution_p <- ggplot(model.selection.results.rs, 
+                         aes(y = 1, fill = forcats::fct_rev(Category))) + 
+  geom_bar(position = "fill", col = "black") + 
+  theme_classic() + 
+  scale_fill_manual(values = colours_cis_trans) + 
+  theme(axis.line.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.y = element_blank(), 
+        axis.title.y=element_blank()) + 
+  theme(plot.margin=unit(c(0.5, 5, 0.5, 6.5),"cm")) + 
+  theme(legend.position = "none") + 
+  xlab("")
+
+pp <- gridExtra::grid.arrange(scatter_p, distribution_p, nrow = 2, 
+                        heights=c(4,1))
+
+ggsave("./Plots/Figure1/RSs_cistrans.pdf", pp)
+
+```
+
+Elongating Spermatids
+
+```{r goncalves_es}
+
+# sce_par_cur_perLibrary_norm <- bulk_es[[1]][rownames(bulk_all[[1]]), ]
+# sce_fil_cur_perLibrary_norm <- bulk_es[[2]][rownames(bulk_all[[1]]), ]
+# 
+# genes.test <- rownames(sce_par_cur_perLibrary_norm)
+# 
+# disps.par.b6 <- estimateDisp(sce_par_cur_perLibrary_norm[,1:2])$tagwise.dispersion
+# names(disps.par.b6) <- rownames(sce_par_cur_perLibrary_norm)
+# disps.par.cast <- estimateDisp(sce_par_cur_perLibrary_norm[,3:4])$tagwise.dispersion
+# names(disps.par.cast) <- rownames(sce_par_cur_perLibrary_norm)
+
+model.selection.results.es <- readRDS("./Data/processed/model_selection_es.rds")
+
+model.selection.results.es[,2:15] <- apply(model.selection.results.es[,2:15], 2, as.numeric)
+model.selection.results.es$chromosome <- annotate_chromosome_new(model.selection.results.es$Gene)$chromosome_name
+model.selection.results.es <- model.selection.results.es[!is.na(model.selection.results.es$chromosome), ]
+model.selection.results.es <- model.selection.results.es[!model.selection.results.es$chromosome %in% c("X", "MT"), ]
+model.selection.results.es <- model.selection.results.es[model.selection.results.es$Category != "NotConverged", ]
+model.selection.results.es$Category <- factor(model.selection.results.es$Category, 
+                                              levels = c("conserved", "cis", "trans", "cis_trans"))
+
+model.selection.results.es[abs(model.selection.results.es$FC_filial) > cf, ]$FC_filial <- 
+  cf * sign(model.selection.results.es[abs(model.selection.results.es$FC_filial) > cf, ]$FC_filial)
+model.selection.results.es[abs(model.selection.results.es$FC_parental) > cf, ]$FC_parental <- 
+  cf * sign(model.selection.results.es[abs(model.selection.results.es$FC_parental) > cf, ]$FC_parental)
+sigsn <- !(abs(model.selection.results.es$FC_filial) == cf | abs(model.selection.results.es$FC_parental) == cf)
+model.selection.results.es$plot_sign <- ifelse(sigsn, "1", "2")
+
+scatter_p <- ggplot(model.selection.results.es, aes(FC_filial, FC_parental, col = Category)) + 
+  geom_abline(linetype = "dashed") + 
+  geom_hline(linetype = "dashed", yintercept = 0) + 
+  geom_vline(linetype = "dashed", xintercept = 0) + 
+  geom_point(size = 0.5) + 
+  xlab("log2(F1_B6/F1_CAST)") + ylab("log2(F0_B6/F0_CAST)") + 
+  coord_fixed() + labs(colour="Regulatory Category") + 
+  scale_color_manual(values = colours_cis_trans) + 
+  scale_x_continuous(limits = c(-cf, cf), expand = c(0.01, 0.01)) + 
+  scale_y_continuous(limits = c(-cf, cf), expand = c(0.01, 0.01)) + 
+  theme_classic() + 
+  theme(text = element_text(size=20)) +
+  theme(panel.background = element_rect(fill = "white", colour = "black", size = 1)) + 
+  theme(legend.position = "none") + 
+  xlab("") + ylab("") + 
+  ggtitle("Elongating Spermatids") + theme(plot.title = element_text(hjust = 0.5))
+
+distribution_p <- ggplot(model.selection.results.es, 
+                         aes(y = 1, fill = forcats::fct_rev(Category))) + 
+  geom_bar(position = "fill", col = "black") + 
+  theme_classic() + 
+  scale_fill_manual(values = colours_cis_trans) + 
+  theme(axis.line.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.y = element_blank(), 
+        axis.title.y=element_blank()) + 
+  theme(plot.margin=unit(c(0.5, 5, 0.5, 6.5),"cm")) + 
+  theme(legend.position = "none") + 
+  xlab("")
+
+pp <- gridExtra::grid.arrange(scatter_p, distribution_p, nrow = 2, 
+                        heights=c(4,1))
+
+ggsave("./Plots/Figure1/ESs_cistrans.pdf", pp)
+
+```
+
+Next, we formally test for differential allelic imbalance using generalized linear models. 
+We then plot and the significant hits comparing spermatocytes with round and elongating spermatids respectively. (F1 E, F)
+
+```{r glm_test_sc_rs}
+
+# mu scatters sc vs rs
+pvals_df <- readRDS("./Data/processed/vglm_pvals_sc_rs")
+
+rownames(model.selection.results.sc) <- model.selection.results.sc$Gene
+rownames(model.selection.results.rs) <- model.selection.results.rs$Gene
+
+genes_check <- intersect(rownames(model.selection.results.sc), 
+                         rownames(model.selection.results.rs))
+
+model.selection.results.sc_here <- model.selection.results.sc[genes_check, ]
+model.selection.results.rs_here <- model.selection.results.rs[genes_check, ]
+
+plot_df <- data.frame(
+  cis_sc = model.selection.results.sc_here$Expr_Fil_B6 / (model.selection.results.sc_here$Expr_Fil_B6 + model.selection.results.sc_here$Expr_Fil_Cast), 
+  par_sc = model.selection.results.sc_here$Expr_Par_B6 / (model.selection.results.sc_here$Expr_Par_B6 + model.selection.results.sc_here$Expr_Par_Cast), 
+  cis_rs = model.selection.results.rs_here$Expr_Fil_B6 / (model.selection.results.rs_here$Expr_Fil_B6 + model.selection.results.rs_here$Expr_Fil_Cast), 
+  par_rs = model.selection.results.rs_here$Expr_Par_B6 / (model.selection.results.rs_here$Expr_Par_B6 + model.selection.results.rs_here$Expr_Par_Cast), 
+  pvalue = p.adjust(pvals_df[genes_check,]$X2)
+)
+
+plot_df <- plot_df[!is.na(plot_df$pvalue), ]
+plot_df$color_in <- "FALSE"
+plot_df$color_in[plot_df$cis_sc - plot_df$cis_rs > 0.05 & plot_df$pvalue < 0.1] <- "SC"
+plot_df$color_in[plot_df$cis_sc - plot_df$cis_rs < -0.05 & plot_df$pvalue < 0.1] <- "RS"
+
+ggplot(plot_df, aes(cis_sc, cis_rs)) + 
+  geom_point(data = plot_df[plot_df$pvalue >= 0.1, ], aes(col = color_in, fill = color_in), size = 4, shape = 21,stroke = 0.25) + 
+  geom_point(data = plot_df[plot_df$pvalue < 0.1, ], aes(col = color_in, fill = color_in), size = 4, shape = 21,stroke = 0.25) + 
+  geom_abline(col = "darkred") + theme_classic() + 
+  scale_x_continuous(breaks = c(0, 0.5, 1), limits = c(0, 1)) + 
+  scale_y_continuous(breaks = c(0, 0.5, 1), limits = c(0, 1)) + 
+  geom_vline(xintercept = 0.5, linetype = "dashed") + geom_hline(yintercept = 0.5, linetype = "dashed") + 
+  scale_color_manual(values = list("SC" = "#D31281", "RS" = "#2A348B", "FALSE" = "black")) + 
+  scale_fill_manual(values = list("SC" = "#D31281", "RS" = "#2A348B", "FALSE" = "white")) + 
+  coord_fixed() + xlab("Spermatocytes \n Allelic imbalance") + ylab("Round Spermatids \n Allelic imbalance") + 
+  theme(text = element_text(size=40), legend.position = "none") + 
+  annotate(geom = "text", x = 0.95, y = .1, label = paste0("higher \n in SC \n (", table(plot_df$color_in)[["SC"]], ")"), size = 12, col = "#D31281") + 
+  annotate(geom = "text", x = 0.07, y = 0.92, label = paste0("higher \n in RS \n (", table(plot_df$color_in)[["RS"]], ")"), size = 12, col = "#2A348B")
+
+ggsave("./Plots/Figure1/scatter_sc_rs.pdf")
+
+```
+
+```{r glm_test_sc_rs}
+
+# mu scatters sc vs rs
+pvals_df <- readRDS("./Data/processed/vglm_pvals_sc_es")
+
+rownames(model.selection.results.sc) <- model.selection.results.sc$Gene
+rownames(model.selection.results.es) <- model.selection.results.es$Gene
+
+genes_check <- intersect(rownames(model.selection.results.sc), 
+                         rownames(model.selection.results.es))
+
+model.selection.results.sc_here <- model.selection.results.sc[genes_check, ]
+model.selection.results.es_here <- model.selection.results.es[genes_check, ]
+
+plot_df <- data.frame(
+  cis_sc = model.selection.results.sc_here$Expr_Fil_B6 / (model.selection.results.sc_here$Expr_Fil_B6 + model.selection.results.sc_here$Expr_Fil_Cast), 
+  par_sc = model.selection.results.sc_here$Expr_Par_B6 / (model.selection.results.sc_here$Expr_Par_B6 + model.selection.results.sc_here$Expr_Par_Cast), 
+  cis_es = model.selection.results.es_here$Expr_Fil_B6 / (model.selection.results.es_here$Expr_Fil_B6 + model.selection.results.es_here$Expr_Fil_Cast), 
+  par_es = model.selection.results.es_here$Expr_Par_B6 / (model.selection.results.es_here$Expr_Par_B6 + model.selection.results.es_here$Expr_Par_Cast), 
+  pvalue = p.adjust(pvals_df[genes_check,]$X2)
+)
+
+plot_df <- plot_df[!is.na(plot_df$pvalue), ]
+plot_df$color_in <- "FALSE"
+plot_df$color_in[plot_df$cis_sc - plot_df$cis_es > 0.05 & plot_df$pvalue < 0.1] <- "SC"
+plot_df$color_in[plot_df$cis_sc - plot_df$cis_es < -0.05 & plot_df$pvalue < 0.1] <- "ES"
+
+ggplot(plot_df, aes(cis_sc, cis_es)) + 
+  geom_point(data = plot_df[plot_df$pvalue >= 0.1, ], aes(col = color_in, fill = color_in), size = 4, shape = 21,stroke = 0.25) + 
+  geom_point(data = plot_df[plot_df$pvalue < 0.1, ], aes(col = color_in, fill = color_in), size = 4, shape = 21,stroke = 0.25) + 
+  geom_abline(col = "darkred") + theme_classic() + 
+  scale_x_continuous(breaks = c(0, 0.5, 1), limits = c(0, 1)) + 
+  scale_y_continuous(breaks = c(0, 0.5, 1), limits = c(0, 1)) + 
+  geom_vline(xintercept = 0.5, linetype = "dashed") + geom_hline(yintercept = 0.5, linetype = "dashed") + 
+  scale_color_manual(values = list("SC" = "#D31281", "ES" = "grey60", "FALSE" = "black")) + 
+  scale_fill_manual(values = list("SC" = "#D31281", "ES" = "grey60", "FALSE" = "white")) + 
+  coord_fixed() + xlab("Spermatocytes \n Allelic imbalance") + ylab("Elongating Spermatids \n Allelic imbalance") + 
+  theme(text = element_text(size=40), legend.position = "none") + 
+  annotate(geom = "text", x = 0.95, y = .1, label = paste0("higher \n in SC \n (", table(plot_df$color_in)[["SC"]], ")"), size = 12, col = "#D31281") + 
+  annotate(geom = "text", x = 0.07, y = 0.92, label = paste0("higher \n in ES \n (", table(plot_df$color_in)[["ES"]], ")"), size = 12, col = "grey60")
+
+ggsave("./Plots/Figure1/scatter_sc_es.pdf")
+
+```
+
+
+We finally derive an embedding based on allelic rates. 
+
+```{r ase_umap}
+
+```
+
+
+### Supplement
+
+```{r supp1}
+
+## Supplementary plots Figure 1
+
+library(tidyverse)
+library(reshape2)
+library(scran)
+library(scater)
+
+#sce.all <- readRDS("~/Desktop/Projects/ASE_Spermatogenesis_Paper/Data/processed/final_sce_f1_dataset_for_supplement.rds")
+sce.all <- readRDS("./Data/processed/sce_merged_new.rds")
+sce.all <- sce.all[,!grepl("Outliers", sce.all$CellType)]
+
+library_colors <- list(
+  "B6_Sample1" = "black",
+  "B6_Sample2" = "grey",
+  "CAST_Sample3" = "chocolate4",
+  "CAST_Sample4" = "chocolate",
+  "F1_B6_CAST_Sample5" = "purple4",
+  "F1_B6_CAST_Sample6" = "purple"
+)
+
+sample_colors <- list(
+  "B6" = "black", 
+  "CAST" = "chocolate", 
+  "F1_B6_CAST" = "purple"
+)
+
+# recompute a clean umap without outlier cells
+set.seed(12345)
+corrected <- metadata(sce.all)$corrected[colnames(sce.all), ]
+umap <- umap::umap(corrected)
+reducedDims(sce.all)$UMAP <- umap$layout
+
+# Supp 1_1:
+stats.df <- read.csv("./Data/processed/filtering_stats.csv", row.names = 1)
+
+stats.df %>% 
+  dplyr::rename(BeforeFiltering = No_cells) %>%
+  pivot_longer(-c(Sample, Library)) %>%
+  ggplot(aes(x = Library, y = value, fill = Sample, group = name)) + 
+    geom_bar(stat = "identity", position = "dodge") + 
+    geom_point(aes(x = Library, y = value + 300, col = name, group = name), position = position_dodge(width = 1), size = 10) + 
+    theme_classic() + 
+    coord_flip() + 
+    scale_color_manual(values = c("black", "grey")) + ylab("Number of cells") + 
+    scale_fill_manual(values = sample_colors) + 
+    theme_paper(textsize = 50) + xlab("")
+
+ggsave("./Plots/FigureS1/FigS1_1.pdf")
+
+# Supp 1_2: 
+
+data_coverage <- data.frame(
+  Library = colData(sce.all)$Library, 
+  Sample = colData(sce.all)$Sample, 
+  Library_Sample = paste0(colData(sce.all)$Sample, "_", colData(sce.all)$Library), 
+  detected = colData(sce.all)$detected
+)
+
+ggplot(data_coverage, aes(y = detected, x = Library, fill = Library_Sample)) + 
+  geom_violin() + scale_fill_manual(values = library_colors) + theme_classic() + 
+  theme(text = element_text(size = 20)) + ylab("Number of detected genes") + xlab("") + 
+  coord_flip() + theme_paper(textsize = 50) + 
+  theme(legend.position = "None") + theme(aspect.ratio = 1.5)
+
+ggsave("./Plots/FigureS1/FigS1_2.pdf")
+
+
+# Supp 1_3:
+
+data_tsne <- data.frame(
+  Library = colData(sce.all)$Library, 
+  Sample = colData(sce.all)$Sample, 
+  Library_Sample = paste0(colData(sce.all)$Sample, "_", colData(sce.all)$Library), 
+  Umap1 = reducedDims(sce.all)$UMAP[,1], 
+  Umap2 = reducedDims(sce.all)$UMAP[,2]
+)
+
+ggplot(data_tsne, aes(Umap1, Umap2, col = Library_Sample)) + 
+  geom_point(alpha = 0.2) + theme_tsne() + facet_wrap(~Sample, nrow = 2) +
+  scale_color_manual(values = library_colors) + coord_fixed() + 
+  theme(text = element_text(size= 50), legend.position = "None")
+
+ggsave("./Plots/FigureS1/FigS1_3.pdf")
+
+# Supp 1_4: 
+
+colour_vector <- c("Spermatogonia" = "#046735",
+                   "Spermatogonia / Leptotene" = "#FBDCEA", 
+                   "Pachytene" = "#D31281",
+                   "Diplotene" = "#7E2678",
+                   "Meiosis" = "#502269",
+                   "Round Spermatids (1)" = "#B3A9D3",
+                   "Round Spermatids (2)" = "#D8DAEC",
+                   "Round Spermatids (3)" = "#9595C9",
+                   "Round Spermatids (4)" = "#6167AF",
+                   "Round Spermatids (5)" = "#2A348B",
+                   "Elongating Spermatids (1)" = "#171447",
+                   "Elongating Spermatids (2)" = "#22232B",
+                   "Elongating Spermatids (3)" = "#444A5E",
+                   "Elongating Spermatids (4)" = "#606B89",
+                   "Elongating Spermatids (5)" = "#737884",
+                   "Elongating Spermatids (6)" = "#737884",
+                   "Elongating Spermatids (7)" = "#737884",
+                   "Sertoli" = "#643F18",
+                   "Leydig" = "#985D25",
+                   "Immune/Endothelial" = "#C48C58")
+
+data.frame(
+  Umap1 = reducedDims(sce.all)$UMAP[,1],
+  Umap2 = reducedDims(sce.all)$UMAP[,2],
+  Cluster = sce.all$AnnotatedClustersFine
+) %>%
+  ggplot(aes(Umap1, Umap2, col = Cluster)) + 
+  scale_color_manual(values = colour_vector) + 
+  geom_point(size = 1) + 
+  theme_paper(textsize = 40) + 
+  theme(legend.title = element_blank()) +
+  guides(colour = guide_legend(override.aes = list(size=10)))
+
+ggsave("./Plots/FigureS1/FigS1_4.pdf")
+
+# Supp 1_5: 
+
+marker_genes <- c("Dazl", "Hormad1", "Piwil1", "Pou5f2", "Tex21", "Prm1", "Cst12", "Insl3", "Acta2")
+
+data_genes <- cbind(2 ** data.frame(as.matrix(t(logcounts(sce.all[marker_genes, ])))), 
+                    Sample = colData(sce.all)$Sample, 
+                    CellType = colData(sce.all)$AnnotatedClusters)
+
+data_genes_transformed <-
+  data_genes %>% pivot_longer(-c(Sample, CellType), names_to = "Gene") %>%
+  group_by(Sample, CellType, Gene) %>%
+  summarize(value = mean(value)) %>% ungroup() %>%
+  group_by(Gene) %>%
+  mutate(value = scale(value))
+
+data_genes_transformed$CellType <- factor(data_genes_transformed$CellType, levels = c("SG", "SC", "RS", "ES", "Sertoli", "Leydig", "Immune/Endothelial"))
+data_genes_transformed$Gene <- factor(data_genes_transformed$Gene, levels = marker_genes)
+
+ggplot(data_genes_transformed, aes(x = CellType, y = Gene, fill = Sample, size = value, group = Sample)) + 
+  geom_point(position=position_dodge(width=0.8), shape = 22, col = "black") + scale_fill_manual(values = sample_colors) + 
+  theme_paper(textsize = 50) + scale_size_area() + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+
+ggsave("./Plots/FigureS1/FigS1_5.pdf")
+
+# Supp 1_6:
+
+data.frame(
+  Library = sce.all$Library, 
+  Sample = sce.all$Sample, 
+  Library_Sample = paste0(sce.all$Sample, "_", sce.all$Library), 
+  CellType = sce.all$AnnotatedClusters
+) %>% group_by(Library_Sample, CellType) %>%
+  dplyr::count() %>%
+  group_by(Library_Sample) %>%
+  mutate(per =  100 * n / sum(n)) %>%
+ggplot(aes(x = CellType, fill = Library_Sample, y = per)) + 
+  geom_bar(position = "dodge", stat = "identity") + 
+  ylim(0, 50) +
+  scale_fill_manual(values = library_colors) + 
+  theme_paper(textsize = 40) + ylab("Cell Type Proportions [%]") + 
+  coord_flip() + xlab("")
+
+ggsave("./Plots/FigureS1/FigS1_6.pdf")
+
+# Allelic data
+
+sce.merged <- sce.all
+sce.merged <- annotate_chromosome_sce(sce.merged)
+
+df_total_counts <- data.frame(
+  Species = sce.merged$Species, 
+  Library = sce.merged$Library, 
+  Counts_Ref = colSums(counts_reference(sce.merged)), 
+  Counts_Alt = colSums(counts_alternative(sce.merged))
+) %>% pivot_longer(-c(Species, Library)) %>%
+  dplyr::rename(Allele = name) %>% dplyr::rename(Counts = value)
+
+average.reference <- df_total_counts %>%
+  dplyr::filter(Allele == "Counts_Ref") %>%
+  group_by(Library) %>%
+  summarize(sum = sum(Counts))
+average.alternative <- df_total_counts %>%
+  dplyr::filter(Allele == "Counts_Alt") %>%
+  group_by(Library) %>%
+  summarize(sum = sum(Counts))
+ratios <- round(average.reference$sum / (average.reference$sum + average.alternative$sum), digits = 3) * 100
+  
+ggplot(df_total_counts, aes(x = Library, y = Counts + 1, fill = Allele)) + 
+  geom_boxplot() + 
+  ylab("log(ReadCounts + 1) per cell") + 
+  xlab("") + 
+  scale_y_log10(limits = c(1, 1.5e5)) + 
+  annotate("text", label = paste0(as.character(ratios), "%"), 
+           x = 1:6, y = 60000, size = 10) + 
+  annotate("text", label = "Percent reference reads: ", 
+           x = 2.6, y = 140000, size = 12) + 
+  theme_classic() + 
+  theme(axis.text.x = element_text(angle = 45, hjust=1)) + 
+  theme_paper(textsize = 40)
+
+ggsave("./Plots/FigureS1/FigS1_7.pdf")
+
+# Plot aggregated data across cells to compare on gene level
+sce_sample1 <- sce.merged[,sce.merged$Library == "Sample1"]
+df_plot_1 <- data.frame(
+  Counts_Reference = rowMeans(counts_reference(sce_sample1)),
+  Counts_Alternative = 0
+)
+df_plot_1[names(rowMeans(counts_reference(sce_sample1))),]$Counts_Alternative <- 
+  rowMeans(counts_alternative(sce_sample1))
+
+sce_sample3 <- sce.merged[,sce.merged$Library == "Sample3"]
+df_plot_3 <- data.frame(
+  Counts_Reference = rowMeans(counts_reference(sce_sample3)),
+  Counts_Alternative = 0
+)
+df_plot_3[names(rowMeans(counts_reference(sce_sample3))),]$Counts_Alternative <- 
+  rowMeans(counts_alternative(sce_sample3))
+
+sce_sample5 <- sce.merged[,sce.merged$Library == "Sample5"]
+sce_sample5 <- annotate_chromosome(sce_sample5)
+df_plot_5 <- data.frame(
+  Counts_Reference = rowMeans(counts_reference(sce_sample5)),
+  Counts_Alternative = 0,
+  Chromosome = rowData(sce_sample5)$chromosome_name %in% c("MT", "X")
+)
+df_plot_5[names(rowMeans(counts_reference(sce_sample5))),]$Counts_Alternative <- 
+  rowMeans(counts_alternative(sce_sample5))
+
+p1 <- ggplot(df_plot_1, aes(log(Counts_Reference + 1), log(Counts_Alternative + 1))) + 
+  geom_point(size = 0.5) + 
+  xlim(0, 4) + ylim(0, 4) + 
+  coord_fixed() + 
+  theme_classic() + 
+  annotate("text", label = "B6 (F0)", 
+           x = 0.7, y = 3.9, size = 15) + 
+  xlab("log( counts B6 + 1)") + 
+  ylab("log( counts CAST + 1)") + 
+  theme_paper(textsize = 50)
+
+p2 <- ggplot(df_plot_3, aes(log(Counts_Reference + 1), log(Counts_Alternative + 1))) + 
+  geom_point(size = 0.5) + 
+  xlim(0, 4) + ylim(0, 4) + 
+  coord_fixed() + 
+  theme_classic() + 
+  annotate("text", label = "CAST (F0)", 
+           x = 1, y = 3.9, size = 15) + 
+  xlab("log( counts B6 + 1)") + 
+  ylab("log( counts CAST + 1)") + 
+  theme_paper(textsize = 50)
+
+p3 <- ggplot(df_plot_5, aes(log(Counts_Reference + 1), log(Counts_Alternative + 1))) + 
+  geom_point(size = 0.5) + 
+  xlim(0, 4) + ylim(0, 4) + 
+  coord_fixed() + 
+  theme_classic() + 
+  annotate("text", label = "B6 x CAST (F1)", 
+           x = 1.4, y = 3.9, size = 15) + 
+  xlab("log( counts B6 + 1)") + 
+  ylab("log( counts CAST + 1)") + 
+  theme_paper(textsize = 50)
+
+ggsave("./Plots/FigureS1/FigS1_8a.pdf", p1)
+ggsave("./Plots/FigureS1/FigS1_8b.pdf", p2)
+ggsave("./Plots/FigureS1/FigS1_8c.pdf", p3)
+
+# Look at ratios per cell type
+
+sce.merged.cut <- sce.merged[!grepl("^mt-", rownames(sce.merged)), ]
+sce.merged.cut <- sce.merged[!rowData(sce.merged)$chromosome_name %in% c("MT"), ]
+
+df_total_counts_f1 <- data.frame(
+  Library = sce.merged.cut$Library, 
+  CellType = factor(sce.merged.cut$CellType, levels = c("SG", "SC", "RS", "ES", "Sertoli", "Leydig", "Immune")), 
+  Counts_Ref = colSums(counts_reference(sce.merged.cut)), 
+  Counts_Alt = colSums(counts_alternative(sce.merged.cut))
+) %>% 
+  dplyr::filter(Library %in% c("Sample5", "Sample6")) %>%
+  add_column(ratio = .$Counts_Ref / (.$Counts_Ref + .$Counts_Alt))
+
+ggplot(df_total_counts_f1, aes(x = CellType, y = ratio)) + 
+  geom_boxplot() + 
+  ylab("B6 / (B6 + CAST)") + 
+  annotate("text", label = "Allelic ratios per cell", 
+           x = 2, y = 0.95, size = 10) + 
+  xlab("") + 
+  theme_classic() + 
+  theme(axis.text.x = element_text(angle = 45, hjust=1)) + 
+  geom_hline(yintercept = 0.5, linetype = "dashed") + 
+  ylim(0, 1) + 
+  theme_paper(textsize = 50)
+
+ggsave("./Plots/FigureS1/FigS1_9.pdf")
+
+## goncalves fitting
+# analysis of goncalves fitting procedure
+
+library(ggplot2)
+
+fits_bulk <- readRDS("./Data/processed/model_selection_bulk.rds")
+fits_sc <- readRDS("./Data/processed/model_selection_sc.rds")
+fits_rs <- readRDS("./Data/processed/model_selection_rs.rds")
+fits_es <- readRDS("./Data/processed/model_selection_es.rds")
+
+# quantify number of effects
+
+effects_combined <- data.frame(
+  Gene  = Reduce("union", list(fits_bulk$Gene, fits_sc$Gene, fits_rs$Gene, fits_es$Gene))
+)
+rownames(effects_combined) <- effects_combined$Gene
+effects_combined$cat_bulk <- NA
+effects_combined$cat_sc <- NA
+effects_combined$cat_rs <- NA
+effects_combined$cat_es <- NA
+
+effects_combined[fits_bulk$Gene, ]$cat_bulk <- as.character(fits_bulk$Category)
+effects_combined[fits_sc$Gene, ]$cat_sc <- as.character(fits_sc$Category)
+effects_combined[fits_rs$Gene, ]$cat_rs <- as.character(fits_rs$Category)
+effects_combined[fits_es$Gene, ]$cat_es <- as.character(fits_es$Category)
+
+# compute number of genes with effects
+effect_counts_bulk <- table(effects_combined$cat_bulk)
+effect_counts_sc <- table(effects_combined$cat_sc)
+effect_counts_rs <- table(effects_combined$cat_rs)
+effect_counts_es <- table(effects_combined$cat_es)
+
+sum(effect_counts_bulk) - effect_counts_bulk[["conserved"]]
+sum(effect_counts_sc) - effect_counts_sc[["conserved"]]
+sum(effect_counts_rs) - effect_counts_rs[["conserved"]]
+sum(effect_counts_es) - effect_counts_es[["conserved"]]
+
+effects_combined$has_bulk_effect <- effects_combined$cat_bulk != "conserved"
+effects_combined$has_celltype_effect <- apply(effects_combined[,c("cat_sc", "cat_rs", "cat_es")], 1, function(x){any(x != "conserved")})
+
+table(effects_combined$has_bulk_effect)
+table(effects_combined$has_celltype_effect)
+
+rbind(
+  data.frame(
+    Analysis = "bulk", 
+    table(effects_combined$has_bulk_effect)
+  ), 
+  data.frame(
+    Analysis = "celltype", 
+    table(effects_combined$has_celltype_effect)
+  )
+) %>%
+  ggplot(aes(x = Analysis, y = Freq, fill = Var1)) + geom_bar(stat = "identity") + 
+  theme_paper(textsize = 40) + theme(legend.position = "None") + 
+  annotate(geom = "text", x = c(1, 2), y = 1000, label = "with \n effect", size = 14) +
+  annotate(geom = "text", x = c(1, 2), y = 4800, label = "without \n effect", size = 14) + 
+  xlab("") + ylab("Number of genes") + ggtitle("All detected effects")
+ggsave("./Plots/FigureS1/FigS1_10a.pdf", width = 8, height = 12)
+
+# by this analysis, we see more effects -- but this has a multiple testing problem as oli mentioned
+
+# do the same thing only on strong effects
+# get likelihood ratios (-LL_alt - (-LL_hyp))
+
+fits_bulk$bf_cis <- fits_bulk$LL.conserved - fits_bulk$LL.cis
+fits_bulk$bf_trans <- fits_bulk$LL.conserved - fits_bulk$LL.trans
+fits_bulk$bf_cis_trans <- fits_bulk$LL.conserved - fits_bulk$LL.cis_trans
+fits_bulk$combined_bf <- apply(fits_bulk[,c("bf_cis", "bf_trans", "bf_cis_trans")], 1, function(x){max(x)})
+
+fits_sc$bf_cis <- fits_sc$LL.conserved - fits_sc$LL.cis
+fits_sc$bf_trans <- fits_sc$LL.conserved - fits_sc$LL.trans
+fits_sc$bf_cis_trans <- fits_sc$LL.conserved - fits_sc$LL.cis_trans
+fits_sc$combined_bf <- apply(fits_sc[,c("bf_cis", "bf_trans", "bf_cis_trans")], 1, function(x){max(x)})
+
+fits_rs$bf_cis <- fits_rs$LL.conserved - fits_rs$LL.cis
+fits_rs$bf_trans <- fits_rs$LL.conserved - fits_rs$LL.trans
+fits_rs$bf_cis_trans <- fits_rs$LL.conserved - fits_rs$LL.cis_trans
+fits_rs$combined_bf <- apply(fits_rs[,c("bf_cis", "bf_trans", "bf_cis_trans")], 1, function(x){max(x)})
+
+fits_es$bf_cis <- fits_es$LL.conserved - fits_es$LL.cis
+fits_es$bf_trans <- fits_es$LL.conserved - fits_es$LL.trans
+fits_es$bf_cis_trans <- fits_es$LL.conserved - fits_es$LL.cis_trans
+fits_es$combined_bf <- apply(fits_es[,c("bf_cis", "bf_trans", "bf_cis_trans")], 1, function(x){max(x)})
+
+bf_cutoff <- 10
+effects_combined_strict <- effects_combined[,1:5]
+
+effects_combined_strict[fits_bulk$combined_bf < bf_cutoff, ]$cat_bulk <- "conserved"
+effects_combined_strict[fits_sc$combined_bf < bf_cutoff, ]$cat_sc <- "conserved"
+effects_combined_strict[fits_rs$combined_bf < bf_cutoff, ]$cat_rs <- "conserved"
+effects_combined_strict[fits_es$combined_bf < bf_cutoff, ]$cat_es <- "conserved"
+
+effects_combined_strict$has_bulk_effect <- effects_combined_strict$cat_bulk != "conserved"
+effects_combined_strict$has_celltype_effect <- apply(effects_combined_strict[,c("cat_sc", "cat_rs", "cat_es")], 1, function(x){any(x != "conserved")})
+
+table(effects_combined_strict$has_bulk_effect)
+table(effects_combined_strict$has_celltype_effect)
+
+rbind(
+  data.frame(
+    Analysis = "bulk", 
+    table(effects_combined_strict$has_bulk_effect)
+  ), 
+  data.frame(
+    Analysis = "celltype", 
+    table(effects_combined_strict$has_celltype_effect)
+  )
+) %>%
+  ggplot(aes(x = Analysis, y = Freq, fill = Var1)) + geom_bar(stat = "identity") + 
+  theme_paper(textsize = 40) + theme(legend.position = "None") + 
+  annotate(geom = "text", x = c(1, 2), y = 1000, label = "with \n effect", size = 14) +
+  annotate(geom = "text", x = c(1, 2), y = 4000, label = "without \n effect", size = 14) + 
+  xlab("") + ylab("Number of genes") + ggtitle("Effects with LLR > 10")
+ggsave("./Plots/FigureS1/FigS1_10b.pdf", width = 8, height = 12)
+
+effect_counts_bulk <- table(effects_combined_strict$cat_bulk)
+effect_counts_sc <- table(effects_combined_strict$cat_sc)
+effect_counts_rs <- table(effects_combined_strict$cat_rs)
+effect_counts_es <- table(effects_combined_strict$cat_es)
+
+sum(effect_counts_bulk) - effect_counts_bulk[["conserved"]]
+sum(effect_counts_sc) - effect_counts_sc[["conserved"]]
+sum(effect_counts_rs) - effect_counts_rs[["conserved"]]
+sum(effect_counts_es) - effect_counts_es[["conserved"]]
+
+# finally look at changes between the bayes factors for individual models
+
+full_df <- rbind(
+  cbind(fits_sc, CellType = "SC"), 
+  cbind(fits_rs, CellType = "RS"), 
+  cbind(fits_es, CellType = "ES")
+)
+full_df <- full_df[,c("Gene", "Category", "bf_cis", "bf_trans", "bf_cis_trans", "CellType")]
+
+full_df %>% dplyr::select(Gene, Category, bf_cis, CellType) %>%
+  pivot_wider(names_from = CellType, values_from = bf_cis) %>%
+  ggplot(aes(SC, RS)) + geom_point() + geom_abline() + 
+  theme_classic() + geom_vline(xintercept = 10, linetype = "dashed") + geom_hline(yintercept = 10, linetype = "dashed") + 
+  xlim(0, 100) + ylim(0, 100) + ggtitle("Comparison of cis effects") + 
+  theme_paper(textsize = 40) + 
+  xlab("Likelihood ratio (Spermatocytes)") + 
+  ylab("Likelihood ratio (Round Spermatids)")
+ggsave("./Plots/FigureS1/FigS1_11a.pdf")
+
+full_df %>% dplyr::select(Gene, Category, bf_trans, CellType) %>%
+  pivot_wider(names_from = CellType, values_from = bf_trans) %>%
+  ggplot(aes(SC, RS)) + geom_point() + geom_abline() + 
+  theme_classic() + geom_vline(xintercept = 10, linetype = "dashed") + geom_hline(yintercept = 10, linetype = "dashed") + 
+  xlim(0, 100) + ylim(0, 100) + ggtitle("Comparison of trans effects") + 
+  theme_paper(textsize = 40) + 
+  xlab("Likelihood ratio (Spermatocytes)") + 
+  ylab("Likelihood ratio (Round Spermatids)")
+ggsave("./Plots/FigureS1/FigS1_11b.pdf")
+
+```

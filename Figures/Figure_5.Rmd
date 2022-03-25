@@ -1,0 +1,1007 @@
+---
+title: "Figure 5"
+author: "Jasper Panten"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "~/Desktop/Projects/ASE_Spermatogenesis_Paper_rerun//")
+```
+
+```{r sss}
+library(scran)
+library(scater)
+source("./Scripts/General/auxiliary.R")
+source("./Scripts/General/reuse_functions.R")
+
+colour_vector <- c("Spermatogonia" = "#046735",
+                   "Pachytene" = "#D31281",
+                   "Diplotene" = "#7E2678",
+                   "Meiosis" = "#502269",
+                   "Round Spermatids (1)" = "#B3A9D3",
+                   "Round Spermatids (2)" = "#D8DAEC",
+                   "Round Spermatids (3)" = "#9595C9",
+                   "Round Spermatids (4)" = "#6167AF",
+                   "Round Spermatids (5)" = "#2A348B",
+                   "Elongating Spermatids (1)" = "#171447",
+                   "Elongating Spermatids (2)" = "#22232B",
+                   "Elongating Spermatids (3)" = "#444A5E",
+                   "Elongating Spermatids (4)" = "#606B89",
+                   "Elongating Spermatids (5)" = "#737884",
+                   "Elongating Spermatids (6)" = "grey50",
+                   "Elongating Spermatids (7)" = "grey60",
+                   "Elongating Spermatids (8)" = "grey70",
+                   "Elongating Spermatids (9)" = "grey80",
+                   "Elongating Spermatids (10)" = "grey90",
+                   "Sertoli" = "#643F18",
+                   "Leydig" = "#985D25",
+                   "Immune" = "#C48C58")
+
+```
+
+```{r ssss}
+
+library(scran)
+library(scater)
+library(viridis)
+library(pheatmap)
+library(zoo)
+library(tidyverse)
+source("./Scripts/General/auxiliary.R")
+source("./Scripts/General/reuse_functions.R")
+
+data_evo <- readRDS("./Data/processed/final_sce_evo_dataset.rds")
+corrected_data <- metadata(data_evo)$corrected
+```
+
+plot species-specific UMAP (Fig 5B)
+
+```{r sssss}
+set.seed(123)
+
+data.frame(
+  umap1 = reducedDims(data_evo)$UMAP[,1], 
+  umap2 = reducedDims(data_evo)$UMAP[,2],
+  species = factor(data_evo$Sample, levels = c("B6", "CAST", "CAROLI")), 
+  celltype = data_evo$CellType
+) %>% ggplot(aes(umap1, umap2, col = celltype)) + 
+  geom_point() + facet_wrap(~species) + 
+  theme_tsne() + scale_color_manual(values = colour_vector) + 
+  theme(legend.position = "None")
+
+ggsave("./Plots/Figure5/umap_per_species.pdf", width = 15, height = 4)
+
+```
+
+Clustering
+
+```{r ssssss}
+
+results_per_gene_expressed_intervals_cast <- readRDS("~/Desktop/Projects/ASE_Spermatogenesis_Paper_rerun/Data/processed/gp_fits_DE_cast_new_2.rds")
+results_per_gene_expressed_intervals <- results_per_gene_expressed_intervals_cast
+results_per_gene_expressed_intervals <- results_per_gene_expressed_intervals[!unlist(lapply(results_per_gene_expressed_intervals, function(x){any(is.na(x))}))]
+
+likelihood_df <- data.frame(
+  likelihood_cons = unlist(lapply(results_per_gene_expressed_intervals, function(x){x[[1]][[3]]})),
+  likelihood_stat = unlist(lapply(results_per_gene_expressed_intervals, function(x){x[[2]][[3]]})),
+  likelihood_dyn = unlist(lapply(results_per_gene_expressed_intervals, function(x){x[[3]][[3]]}))
+)
+bf_dynamic_deg_cast <- likelihood_df$likelihood_dyn - likelihood_df$likelihood_stat
+names(bf_dynamic_deg_cast) <- names(results_per_gene_expressed_intervals)
+
+results_per_gene_expressed_intervals_caroli <- readRDS("~/Desktop/Projects/ASE_Spermatogenesis_Paper/Data/processed/gp_fits_DE_caroli_new_2.rds")
+results_per_gene_expressed_intervals <- results_per_gene_expressed_intervals_caroli
+results_per_gene_expressed_intervals <- results_per_gene_expressed_intervals[!unlist(lapply(results_per_gene_expressed_intervals, function(x){any(is.na(x))}))]
+
+likelihood_df <- data.frame(
+  likelihood_cons = unlist(lapply(results_per_gene_expressed_intervals, function(x){x[[1]][[3]]})),
+  likelihood_stat = unlist(lapply(results_per_gene_expressed_intervals, function(x){x[[2]][[3]]})),
+  likelihood_dyn = unlist(lapply(results_per_gene_expressed_intervals, function(x){x[[3]][[3]]}))
+)
+bf_dynamic_deg_caroli <- likelihood_df$likelihood_dyn - likelihood_df$likelihood_stat
+names(bf_dynamic_deg_caroli) <- names(results_per_gene_expressed_intervals)
+
+# joint clustering approach here as well
+
+data <- readRDS("~/Desktop/Projects/ASE_Spermatogenesis_Paper_rerun//Data/processed/data_evo_for_fitting.rds")
+
+genes_test <- rownames(data[[1]])
+genes_test <- genes_test[!genes_test %in% c("Krt82", "Uroc1", "Rax")]
+
+data_f0_b6 <- data[[1]]
+data_f0_cast <- data[[2]]
+data_f0_caroli <- data[[3]]
+
+sfs_vector_b6_cast <- colSums(data_f0_b6) / colSums(data_f0_cast)
+sfs_vector_b6_caroli <- colSums(data_f0_b6) / colSums(data_f0_caroli)
+sfs_vector_b6_caroli[is.na(sfs_vector_b6_caroli)] <- 1
+data_f0_b6_norm <- data_f0_b6 / 1
+data_f0_cast_norm <- t(t(data_f0_cast) * sfs_vector_b6_cast)
+data_f0_caroli_norm <- t(t(data_f0_caroli) * sfs_vector_b6_caroli)
+
+rs_f0_noStab_cast <- (data_f0_b6_norm[genes_test, ]) / (data_f0_b6_norm[genes_test, ] + data_f0_cast_norm[genes_test, ])
+rs_f0_cast <- (data_f0_b6_norm[genes_test, ] + 1) / (data_f0_b6_norm[genes_test, ] + data_f0_cast_norm[genes_test, ] + 2)
+rs_f0_noStab_caroli <- (data_f0_b6_norm[genes_test, ]) / (data_f0_b6_norm[genes_test, ] + data_f0_caroli_norm[genes_test, ])
+rs_f0_caroli <- (data_f0_b6_norm[genes_test, ] + 1) / (data_f0_b6_norm[genes_test, ] + data_f0_caroli_norm[genes_test, ] + 2)
+
+total_exp <- data_f0_b6 + data_f0_cast + data_f0_caroli
+total_exp <- total_exp[genes_test,]
+
+set.seed(123)
+scale_to_zero_one <- function(x){(x - min(x)) / (max(x) - min(x))}
+make_meta_profiles <- function(dataset, k = 5){
+  dis_mat <- dist(dataset)
+  expression_clusters <- cutree(hclust(dis_mat, method = "complete"), k = k)
+  cluster_counts <- table(expression_clusters)
+  print(cluster_counts)
+  res <- lapply(unique(expression_clusters), function(i){
+    dd <- dataset[expression_clusters == i, ]
+    if (  cluster_counts[[i]] == 1 ){
+      return(dd)
+    }
+    return(colMeans(dd, na.rm = T))
+  })
+  return(do.call("rbind", res))
+}
+
+rs_f0_plot_cast <- rs_f0_cast[names(bf_dynamic_deg_cast[bf_dynamic_deg_cast > 10]), ]
+rs_f0_plot_cast <-  data.frame(t(rollapply(t(rs_f0_plot_cast), width = 10, by = 1, FUN = mean, align = "left")))
+rs_f0_plot_cast <- abs(rs_f0_plot_cast - 0.5)
+rs_f0_plot_unscaled_cast <- rs_f0_plot_cast
+rs_f0_plot_cast <- t(apply(rs_f0_plot_cast, 1, scale_to_zero_one))
+cast_input <- rs_f0_plot_cast
+
+rs_f0_plot_caroli <- rs_f0_caroli[names(bf_dynamic_deg_caroli[bf_dynamic_deg_caroli > 10]), ]
+rs_f0_plot_caroli <-  data.frame(t(rollapply(t(rs_f0_plot_caroli), width = 10, by = 1, FUN = mean, align = "left")))
+rs_f0_plot_caroli <- abs(rs_f0_plot_caroli - 0.5)
+rs_f0_plot_unscaled_caroli <- rs_f0_plot_caroli
+rs_f0_plot_caroli <- t(apply(rs_f0_plot_caroli, 1, scale_to_zero_one))
+caroli_input <- rs_f0_plot_caroli
+
+# combine datasets
+cast_names <- paste0("CAST_", rownames(cast_input))
+caroli_names <- paste0("CAROLI_", rownames(caroli_input))
+
+combined_input <- rbind(cast_input, caroli_input)
+rownames(combined_input) <- c(cast_names, caroli_names)
+
+set.seed(123)
+n_clusters <- 7
+clusters <- cutree(hclust(dist(combined_input), method = "complete"), k = n_clusters)
+
+trace_results <- lapply(1:7, function(i){
+  dds = combined_input[clusters == i, ]
+  cast_trace = colMeans(dds[grepl("CAST", rownames(dds)), ])
+  caroli_trace = colMeans(dds[grepl("CAROLI", rownames(dds)), ])
+  dds <- data.frame(do.call("rbind", list(cast_trace, caroli_trace)))
+  dds$Cluster = paste0("Cluster_", i)
+  dds$View = c(c("cast", "caroli"))
+  dds
+})
+trace_results <- data.frame(do.call("rbind", trace_results))
+
+trace_results %>%
+  pivot_longer(-c("Cluster", "View")) %>%
+  mutate(name = as.numeric(gsub("X", "", name))) %>%
+  ggplot(aes(x = name, y = value, col = View)) + geom_point() + 
+  facet_wrap(~Cluster) + 
+  theme_classic()
+
+# Trace plots for individual clusters
+color_1 <- "grey"
+color_2 <- "#E69F00"
+color_3 <- "#009E73"
+
+cluster_colors <- c(
+  colorRampPalette(c(color_1, color_2, color_3))(7)[7], 
+  "grey",
+  colorRampPalette(c(color_1, color_2, color_3))(7)[6], 
+  colorRampPalette(c(color_1, color_2, color_3))(7)[5],
+  "grey",
+  "grey", 
+  colorRampPalette(c(color_1, color_2, color_3))(7)[4]
+)
+names(cluster_colors) <- paste0("Cluster_", 1:7)
+
+late_clusters <- paste0("Cluster_", c(1, 3, 4, 7))
+
+# for cast
+trace_results %>% 
+  dplyr::filter(View == "cast") %>%
+  pivot_longer(-c("Cluster", "View")) %>%
+  mutate(name = as.numeric(gsub("X", "", name))) %>%
+  dplyr::filter(Cluster %in% late_clusters) %>%
+ggplot() + 
+  geom_smooth(span = 0.5, size = 2, aes(x = name, y = value, col = Cluster)) + 
+  theme_classic() +
+  theme(text = element_text(size = 30)) +
+  xlab("") +
+  ylab("RES") +
+  theme(legend.position = "None") +
+  scale_color_manual(values = cluster_colors) +
+  ggtitle("Differential Expression (F0, CAST vs B6)") +
+  theme(axis.line = element_line(colour = "black"),
+        panel.border = element_rect(colour = "black", fill=NA, size=1))
+ggsave("./Plots/Figure5/CAST_trace_plot.pdf", width = 16, height = 5)
+
+data.frame(
+  Cluster = factor(paste0("Cluster_", unique(clusters)), levels = paste0("Cluster_", c(1, 3, 4, 7, 2, 5, 6))),
+  nGenes = as.numeric(table(clusters))
+) %>% ggplot(aes(x="", y = nGenes, fill = as.factor(Cluster))) +
+  geom_bar(stat = "identity", width = 1, color = "black") +
+  coord_polar("y", start=0) + 
+  scale_fill_manual(values = cluster_colors) + 
+  theme_void() + theme(legend.position = "None")
+ggsave("./Plots/Figure5/CAST_venn.pdf",  width = 20, height = 20)
+
+# for caroli
+trace_results %>% 
+  dplyr::filter(View == "caroli") %>%
+  pivot_longer(-c("Cluster", "View")) %>%
+  mutate(name = as.numeric(gsub("X", "", name))) %>%
+  dplyr::filter(Cluster %in% late_clusters) %>%
+ggplot() + 
+  geom_smooth(span = 0.5, size = 2, aes(x = name, y = value, col = Cluster)) + 
+  theme_classic() +
+  theme(text = element_text(size = 30)) +
+  xlab("") +
+  ylab("RES") +
+  theme(legend.position = "None") +
+  scale_color_manual(values = cluster_colors) +
+  ggtitle("Differential Expression (F0, CAROLI vs B6)") +
+  theme(axis.line = element_line(colour = "black"),
+        panel.border = element_rect(colour = "black", fill=NA, size=1))
+ggsave("./Plots/Figure5/CAROLI_trace_plot.pdf", width = 16, height = 5)
+
+data.frame(
+  Cluster = factor(paste0("Cluster_", unique(clusters)), levels = paste0("Cluster_", c(1, 3, 4, 7, 2, 5, 6))),
+  nGenes = as.numeric(table(clusters))
+) %>% ggplot(aes(x="", y = nGenes, fill = as.factor(Cluster))) +
+  geom_bar(stat = "identity", width = 1, color = "black") +
+  coord_polar("y", start=0) + 
+  scale_fill_manual(values = cluster_colors) + 
+  theme_void() + theme(legend.position = "None")
+ggsave("./Plots/Figure5/CAROLI_venn.pdf",  width = 20, height = 20)
+
+total_effect_sizes_unscaled <- data.frame(
+  "Bins" = 1:91,
+  "total" = (colSums(data_f0_b6) + colSums(data_f0_cast))[1:91],
+  "deg" = colMeans(rs_f0_plot_unscaled_cast)[1:91]
+) %>% pivot_longer(-c("Bins"))
+
+ggplot(total_effect_sizes_unscaled[total_effect_sizes_unscaled$name == "deg", ],
+       aes(x = Bins, y = value, col = name)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(span = 0.2) +
+  geom_smooth(span = 1, col = "black", linetype = 'dashed') +
+  theme_classic() +
+  theme(text = element_text(size = 30),
+        legend.position = "None") +
+  ylab("") + xlab("") +
+  theme(axis.line = element_line(colour = "black"),
+        panel.border = element_rect(colour = "black", fill=NA, size=1))
+ggsave("./Plots/Figure5/F5_clustering_CAST_unscaled.pdf",  width = 16, height = 2.5)
+
+total_effect_sizes_unscaled <- data.frame(
+  "Bins" = 1:91,
+  "total" = (colSums(data_f0_b6) + colSums(data_f0_caroli))[1:91],
+  "deg" = colMeans(rs_f0_plot_unscaled_caroli)[1:91]
+) %>% pivot_longer(-c("Bins"))
+
+ggplot(total_effect_sizes_unscaled[total_effect_sizes_unscaled$name == "deg", ],
+       aes(x = Bins, y = value, col = name)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(span = 0.2) +
+  geom_smooth(span = 1, col = "black", linetype = 'dashed') +
+  theme_classic() +
+  theme(text = element_text(size = 30),
+        legend.position = "None") +
+  ylab("") + xlab("") +
+  theme(axis.line = element_line(colour = "black"),
+        panel.border = element_rect(colour = "black", fill=NA, size=1))
+ggsave("./Plots/Figure5/F5_clustering_CAROLI_unscaled.pdf",  width = 16, height = 2.5)
+
+```
+
+correlation analysis
+
+```{r ssss}
+
+# Loop through cell-types
+cell_types <- unique(data_evo$CellType)
+
+# Data frames to store results
+df.out <- data.frame()
+all.dists.b6 <- list()
+all.dists.cast <- list()
+all.dists.caroli <- list()
+
+for(i in cell_types){
+  # B6 versus B6
+  
+  print(i)
+  
+  sce1 <- data_evo[,data_evo$Sample == "B6" & data_evo$CellType == i]
+  
+  # Remove non-expressed genes
+  sce1 <- sce1[Matrix::rowMeans(counts(sce1)) > 0,]
+  
+  cur_dist <- pairwiseCor(x = sce1)
+  df.out <- rbind(df.out, data.frame(Cell_type = i,
+                                     Strain = "B6",
+                                     median = median(cur_dist),
+                                     lower = quantile(cur_dist, 0.10),
+                                     upper = quantile(cur_dist, 0.90)))
+  
+  all.dists.b6[[i]] <- cur_dist
+  
+  # B6 versus CAST
+  sce2 <- data_evo[,data_evo$Sample == "CAST" & data_evo$CellType == i]
+  sce2 <- sce2[Matrix::rowMeans(counts(sce1)) > 0,]
+  
+  # Shared genes
+  genes <- intersect(rownames(sce1), rownames(sce2))
+  
+  cur_dist <- pairwiseCor(x = sce1[genes,], y = sce2[genes,])
+  df.out <- rbind(df.out, data.frame(Cell_type = i,
+                                     Strain = "CAST",
+                                     median = median(cur_dist),
+                                     lower = quantile(cur_dist, 0.10),
+                                     upper = quantile(cur_dist, 0.90)))
+  
+    all.dists.cast[[i]] <- cur_dist
+
+  
+  # B6 versus CAROLI
+  sce2 <- data_evo[,data_evo$Sample == "CAROLI" & data_evo$CellType == i]
+  sce2 <- sce2[Matrix::rowMeans(counts(sce1)) > 0,]
+  
+  # Shared genes
+  genes <- intersect(rownames(sce1), rownames(sce2))
+  
+  cur_dist <- pairwiseCor(x = sce1[genes,], y = sce2[genes,])
+  df.out <- rbind(df.out, data.frame(Cell_type = i,
+                                     Strain = "CAROLI",
+                                     median = median(cur_dist),
+                                     lower = quantile(cur_dist, 0.10),
+                                     upper = quantile(cur_dist, 0.90)))
+  
+  all.dists.caroli[[i]] <- cur_dist
+}
+
+names(all.dists.b6) <- cell_types
+names(all.dists.cast) <- cell_types
+names(all.dists.caroli) <- cell_types
+
+plot_levels <- levels(data_evo$CellType)
+
+df.out$Cell_type <- factor(df.out$Cell_type, levels = plot_levels)
+df.out$Strain <- factor(df.out$Strain, levels = c("B6", "CAST", "CAROLI"))
+
+df.out <- df.out[!df.out$Cell_type %in% c("Immune", "Leydig", "Sertoli"), ]
+
+df.out.normalized <- do.call("rbind", lapply(unique(df.out$Cell_type), function(cell_type){
+	cur_data <- df.out[df.out$Cell_type == cell_type,]
+	norm_factor <- cur_data[cur_data$Strain == "B6",]$median
+	corrected_matrix <- apply(cur_data[,c("median", "lower", "upper")], 1, function(cur_row){
+								  cur_row - norm_factor})
+	corrected_matrix <- t(corrected_matrix)
+	cbind(cur_data[,c("Cell_type", "Strain")], corrected_matrix)
+}))
+
+strain_correlation <- df.out %>% 
+  dplyr::filter(!Cell_type %in% paste0("S", 12:16)) %>%
+  ggplot() + 
+  geom_errorbar(aes(x = Cell_type, ymin=lower, ymax=upper, group = Strain), width=.1,
+                position = position_dodge(width = 0.75)) +
+  geom_point(aes(Cell_type, median, fill = Strain, group = Strain), 
+             shape = 22, size = 4, position = position_dodge(width = 0.75)) +
+  ylab("Correlation") + 
+  scale_fill_manual(values = c("B6" = "black", "CAST" = "chocolate", 
+                               "CAROLI" = "brown4")) + 
+  theme_classic() + theme(axis.text.x = element_text(angle = 45, hjust= 1), 
+                          text = element_text(size=20)) + 
+  ylim(0, 1) + xlab("") + 
+  geom_point(aes(x = Cell_type, y = 1, col = Cell_type), size = 5) + 
+  scale_color_manual(values = colour_vector, guide = "none") + 
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank()) + 
+  theme_paper(textsize = 30)
+
+strain_correlation
+
+strain_correlation_delta <- df.out.normalized %>%
+  dplyr::filter(!Cell_type %in% paste0("S", 12:16)) %>%
+  ggplot() + 
+    geom_smooth(aes(Cell_type, - median, col = Strain, group = Strain)) +
+  geom_point(aes(Cell_type, - median, fill = Strain, group = Strain), 
+             shape = 21, size = 1) +
+  ylab("Transcriptional \n divergence") + 
+  scale_fill_manual(values = c("B6" = "black", "CAST" = "chocolate", 
+                               "CAROLI" = "brown4")) + 
+  scale_color_manual(values = c("B6" = "black", "CAST" = "chocolate", 
+                               "CAROLI" = "brown4")) + 
+  theme_classic() + 
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(), 
+        plot.margin = unit(c(40, 1, 1, 1), "pt"), 
+        text = element_text(size=30))
+
+arranged_plots <- ggpubr::ggarrange(strain_correlation, strain_correlation_delta, nrow = 2, heights = c(8, 2), align = "v")
+ggsave("./Plots/Figure5/correlation_plot.pdf", arranged_plots, height = 8, width = 15)
+
+# test for differences in correlation values
+df <- rbind(data.frame(dists = all.dists.b6$Spermatogonia, y = "SG", species = "B6"), 
+      data.frame(dists = all.dists.b6$`Round Spermatids (3)`, y = "Round Spermatids (3)", species = "B6"), 
+      data.frame(dists = all.dists.cast$Spermatogonia, y = "SG", species = "CAST"), 
+      data.frame(dists = all.dists.cast$`Round Spermatids (3)`, y = "Round Spermatids (3)", species = "CAST"))
+
+df %>% ggplot(aes(x = y, y = dists, fill = species)) + geom_violin() + geom_boxplot(width = 0.1)
+
+df2 <- df %>% group_by(y, species) %>%
+  summarize(dist = median(dists))
+
+df2[1, ]$dist - df2[2, ]$dist - (df2[3, ]$dist - df2[4, ]$dist)
+
+summary(lm(data = df, dists ~ y * species))
+
+
+```
+
+correlation analysis
+
+```{r ssss}
+
+# Loop through cell-types
+cell_types <- unique(data_evo$CellType)
+
+# Data frames to store results
+df.out <- data.frame()
+
+for(i in cell_types){
+  # B6 versus B6
+  
+  print(i)
+  
+  sce1 <- data_evo[,data_evo$Sample == "B6" & data_evo$CellType == i]
+  
+  # Remove non-expressed genes
+  sce1 <- sce1[Matrix::rowMeans(counts(sce1)) > 0,]
+  
+  cur_dist <- pairwiseCor(x = sce1)
+  df.out <- rbind(df.out, data.frame(Cell_type = i,
+                                     Strain = "B6",
+                                     median = median(cur_dist),
+                                     lower = quantile(cur_dist, 0.10),
+                                     upper = quantile(cur_dist, 0.90)))
+  
+  # B6 versus CAST
+  sce2 <- data_evo[,data_evo$Sample == "CAST" & data_evo$CellType == i]
+  sce2 <- sce2[Matrix::rowMeans(counts(sce1)) > 0,]
+  
+  # Shared genes
+  genes <- intersect(rownames(sce1), rownames(sce2))
+  
+  cur_dist <- pairwiseCor(x = sce1[genes,], y = sce2[genes,])
+  df.out <- rbind(df.out, data.frame(Cell_type = i,
+                                     Strain = "CAST",
+                                     median = median(cur_dist),
+                                     lower = quantile(cur_dist, 0.10),
+                                     upper = quantile(cur_dist, 0.90)))
+  
+  # B6 versus CAROLI
+  sce2 <- data_evo[,data_evo$Sample == "CAROLI" & data_evo$CellType == i]
+  sce2 <- sce2[Matrix::rowMeans(counts(sce1)) > 0,]
+  
+  # Shared genes
+  genes <- intersect(rownames(sce1), rownames(sce2))
+  
+  cur_dist <- pairwiseCor(x = sce1[genes,], y = sce2[genes,])
+  df.out <- rbind(df.out, data.frame(Cell_type = i,
+                                     Strain = "CAROLI",
+                                     median = median(cur_dist),
+                                     lower = quantile(cur_dist, 0.10),
+                                     upper = quantile(cur_dist, 0.90)))
+}
+
+plot_levels <- levels(data_evo$CellType)
+
+df.out$Cell_type <- factor(df.out$Cell_type, levels = plot_levels)
+df.out$Strain <- factor(df.out$Strain, levels = c("B6", "CAST", "CAROLI"))
+
+df.out <- df.out[!df.out$Cell_type %in% c("Immune", "Leydig", "Sertoli"), ]
+
+df.out.normalized <- do.call("rbind", lapply(unique(df.out$Cell_type), function(cell_type){
+	cur_data <- df.out[df.out$Cell_type == cell_type,]
+	norm_factor <- cur_data[cur_data$Strain == "B6",]$median
+	corrected_matrix <- apply(cur_data[,c("median", "lower", "upper")], 1, function(cur_row){
+								  cur_row - norm_factor})
+	corrected_matrix <- t(corrected_matrix)
+	cbind(cur_data[,c("Cell_type", "Strain")], corrected_matrix)
+}))
+
+strain_correlation <- df.out %>% 
+  dplyr::filter(!Cell_type %in% paste0("S", 12:16)) %>%
+  ggplot() + 
+  geom_errorbar(aes(x = Cell_type, ymin=lower, ymax=upper, group = Strain), width=.1,
+                position = position_dodge(width = 0.75)) +
+  geom_point(aes(Cell_type, median, fill = Strain, group = Strain), 
+             shape = 22, size = 4, position = position_dodge(width = 0.75)) +
+  ylab("Correlation") + 
+  scale_fill_manual(values = c("B6" = "black", "CAST" = "chocolate", 
+                               "CAROLI" = "brown4")) + 
+  theme_classic() + theme(axis.text.x = element_text(angle = 45, hjust= 1), 
+                          text = element_text(size=20)) + 
+  ylim(0, 1) + xlab("") + 
+  geom_point(aes(x = Cell_type, y = 1, col = Cell_type), size = 5) + 
+  scale_color_manual(values = colour_vector, guide = "none") + 
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank()) + 
+  theme_paper(textsize = 30)
+
+strain_correlation
+
+strain_correlation_delta <- df.out.normalized %>%
+  dplyr::filter(!Cell_type %in% paste0("S", 12:16)) %>%
+  ggplot() + 
+    geom_smooth(aes(Cell_type, - median, col = Strain, group = Strain)) +
+  geom_point(aes(Cell_type, - median, fill = Strain, group = Strain), 
+             shape = 21, size = 1) +
+  ylab("Transcriptional \n divergence") + 
+  scale_fill_manual(values = c("B6" = "black", "CAST" = "chocolate", 
+                               "CAROLI" = "brown4")) + 
+  scale_color_manual(values = c("B6" = "black", "CAST" = "chocolate", 
+                               "CAROLI" = "brown4")) + 
+  theme_classic() + 
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(), 
+        plot.margin = unit(c(40, 1, 1, 1), "pt"), 
+        text = element_text(size=30))
+
+arranged_plots <- ggpubr::ggarrange(strain_correlation, strain_correlation_delta, nrow = 2, heights = c(8, 2), align = "v")
+ggsave("./Plots/Figure5/correlation_plot.pdf", arranged_plots, height = 8, width = 15)
+
+```
+
+
+for supplement (QC of interspecies data)
+
+for supplement (alignments)
+
+```{r ssssssss}
+
+library_colors <- list(
+  "B6_do17815" = "black",
+  "B6_do17816" = "grey",
+  "CAST_do17811" = "chocolate4",
+  "CAST_do17812" = "chocolate",
+  "CAROLI_do17819" = "brown4",
+  "CAROLI_do17820" = "brown"
+)
+
+sample_colors <- list(
+  "B6" = "black", 
+  "CAST" = "chocolate", 
+  "CAROLI" = "brown"
+)
+
+# Supp 1A:
+
+sce.all <- data_evo
+
+stats.df <- read.csv("~/Desktop/Projects/ASE_Spermatogenesis_Paper/Data/processed/filtering_stats_evo.csv", row.names = 1)
+
+stats.df %>% 
+  dplyr::rename(BeforeFiltering = No_cells) %>%
+  pivot_longer(-c(Sample, Library)) %>%
+  ggplot(aes(x = Library, y = value, fill = Sample, group = name)) + 
+    geom_bar(stat = "identity", position = "dodge") + 
+    geom_point(aes(x = Library, y = value + 300, col = name, group = name), position = position_dodge(width = 1), size = 10) + 
+    theme_classic() + 
+    coord_flip() + ggtitle("Number of cells before and after filtering") + 
+    scale_color_manual(values = c("black", "grey")) + ylab("Number of cells") + 
+    scale_fill_manual(values = sample_colors) + 
+    theme_paper(textsize = 50) + xlab("") + ggtitle("")
+ggsave("./Plots/FigureS5/FigS5_1.pdf")
+
+# Supp 1B: 
+
+data_coverage <- data.frame(
+  Library = colData(sce.all)$Library, 
+  Sample = colData(sce.all)$Sample, 
+  Library_Sample = paste0(colData(sce.all)$Sample, "_", colData(sce.all)$Library), 
+  detected = colData(sce.all)$detected
+)
+
+ggplot(data_coverage, aes(y = detected, x = Library, fill = Library_Sample)) + 
+  geom_violin() + 
+  scale_fill_manual(values = library_colors) + 
+  theme_classic() + 
+  theme(text = element_text(size = 20)) + ylab("Number of detected genes") + xlab("") + 
+  theme_paper(textsize = 30) + coord_flip() + theme(legend.position = "None")
+ggsave("./Plots/FigureS5/FigS5_2.pdf", width = 7, height = 7)
+
+# Supp 1C: 
+
+data.frame(
+  umap1 = reducedDims(sce.all)$UMAP[,1], 
+  umap2 = reducedDims(sce.all)$UMAP[,2],
+  Library_Sample = paste0(colData(sce.all)$Sample, "_", colData(sce.all)$Library), 
+  species = factor(data_evo$Sample, levels = c("B6", "CAST", "CAROLI")), 
+  celltype = data_evo$CellType
+) %>% ggplot(aes(umap1, umap2, col = Library_Sample)) + 
+  geom_point(size = 0.2) + facet_wrap(~species, nrow = 2) + 
+  theme_tsne() + scale_color_manual(values = library_colors) + coord_fixed() + 
+  theme(text = element_text(size = 50)) + theme(legend.position = "None")
+ggsave("./Plots/FigureS5/FigS5_3.pdf")
+
+# Supp 1D:
+
+colour_vector <- c("Spermatogonia" = "#046735",
+                   "Pachytene" = "#D31281",
+                   "Diplotene" = "#7E2678",
+                   "Meiosis" = "#502269",
+                   "Round Spermatids (1)" = "#B3A9D3",
+                   "Round Spermatids (2)" = "#D8DAEC",
+                   "Round Spermatids (3)" = "#9595C9",
+                   "Round Spermatids (4)" = "#6167AF",
+                   "Round Spermatids (5)" = "#2A348B",
+                   "Round Spermatids (6)" = "#282B69",
+                   "Elongating Spermatids (1)" = "#171447",
+                   "Elongating Spermatids (2)" = "#22232B",
+                   "Elongating Spermatids (3)" = "#444A5E",
+                   "Elongating Spermatids (4)" = "#606B89",
+                   "Elongating Spermatids (5)" = "#737884",
+                   "Elongating Spermatids (6)" = "#737884",
+                   "Elongating Spermatids (7)" = "#737884",
+                   "Elongating Spermatids (8)" = "#737884",
+                   "Elongating Spermatids (9)" = "#737884",
+                   "Sertoli" = "#643F18",
+                   "Leydig" = "#985D25",
+                   "Immune" = "#C48C58")
+
+data.frame(
+  Umap1 = reducedDims(sce.all)$UMAP[,1],
+  Umap2 = reducedDims(sce.all)$UMAP[,2],
+  Cluster = sce.all$CellType
+) %>%
+  ggplot(aes(Umap1, Umap2, col = Cluster)) + 
+  scale_color_manual(values = colour_vector) + 
+  geom_point(size = 1) + 
+  theme_paper(textsize = 35) + 
+  theme(legend.title = element_blank()) +
+  guides(colour = guide_legend(override.aes = list(size=5), ncol = 1))
+ggsave("./Plots/FigureS5/FigS5_4.pdf")
+
+# Supp 1D: 
+
+marker_genes <- c("Dazl", "Hormad1", "Piwil1", "Pou5f2", "Tex21", "Prm1", "Cst12", "Insl3", "Acta2")
+
+convert_cell_types <- list(
+  "Spermatogonia" = "SG", 
+   "Pachytene" = "SC", 
+   "Diplotene" = "SC", 
+   "Meiosis" =  "SC", 
+   "M"= "SC", 
+   "Round Spermatids (1)" = "RS", 
+   "Round Spermatids (2)" = "RS", 
+   "Round Spermatids (3)" = "RS", 
+   "Round Spermatids (4)" = "RS",
+   "Round Spermatids (5)" = "RS",
+   "Elongating Spermatids (1)" = "RS",
+   "Elongating Spermatids (2)" = "ES",
+   "Elongating Spermatids (3)" = "ES",
+   "Elongating Spermatids (4)" = "ES",
+   "Elongating Spermatids (5)" = "ES",
+   "Elongating Spermatids (6)" = "ES",
+   "Elongating Spermatids (7)" = "ES",
+   "Elongating Spermatids (8)" = "ES",
+   "Elongating Spermatids (9)" = "ES",
+   "Elongating Spermatids (10)" = "ES",
+   "Sertoli" = "Sertoli",
+   "Leydig" = "Leydig",
+   "Immune" = "Immune"
+)
+
+data_genes <- cbind(2 ** data.frame(as.matrix(t(logcounts(sce.all[marker_genes, ])))), 
+                    Sample = colData(sce.all)$Sample, 
+                    CellType = unlist(convert_cell_types[sce.all$CellType]))
+
+data_genes_transformed <-
+  data_genes %>% pivot_longer(-c(Sample, CellType), names_to = "Gene") %>%
+  group_by(Sample, CellType, Gene) %>%
+  summarize(value = mean(value)) %>% ungroup() %>%
+  group_by(Gene) %>%
+  mutate(value = scale(value))
+
+data_genes_transformed$CellType <- factor(data_genes_transformed$CellType, levels = c("SG", "SC", "RS", "ES", "Sertoli", "Leydig", "Immune"))
+data_genes_transformed$Gene <- factor(data_genes_transformed$Gene, levels = marker_genes)
+
+ggplot(data_genes_transformed, aes(x = CellType, y = Gene, fill = Sample, size = value, group = Sample)) + 
+  geom_point(position=position_dodge(width=0.8), shape = 22, col = "black") + scale_fill_manual(values = sample_colors) + 
+  theme_paper(textsize = 40) + scale_size_area()
+ggsave("./Plots/FigureS5/FigS5_5.pdf")
+
+# Supp 1E:
+
+data.frame(
+  Library = sce.all$Library, 
+  Sample = sce.all$Sample, 
+  Library_Sample = paste0(sce.all$Sample, "_", sce.all$Library), 
+  CellType = unlist(convert_cell_types[sce.all$CellType])
+) %>% group_by(Library_Sample, CellType) %>%
+  dplyr::count() %>%
+  group_by(Library_Sample) %>%
+  mutate(per =  100 * n / sum(n)) %>%
+ggplot(aes(x = CellType, fill = Library_Sample, y = per)) + 
+  geom_bar(position = "dodge", stat = "identity") + 
+  #ylim(0, 50) +
+  scale_fill_manual(values = library_colors) + 
+  theme_paper(textsize = 30) + ylab("Cell Type Proportions [%]") + 
+  coord_flip()
+ggsave("./Plots/FigureS5/FigS5_6.pdf")
+
+```
+
+Addendum: Check if pearson and cosine similarity give the same results as spearman cor in correlation analysis
+Pearson: 
+
+```{r ssss}
+
+# Loop through cell-types
+cell_types <- unique(data_evo$CellType)
+
+# Data frames to store results
+df.out <- data.frame()
+
+for(i in cell_types){
+  # B6 versus B6
+  
+  print(i)
+  
+  sce1 <- data_evo[,data_evo$Sample == "B6" & data_evo$CellType == i]
+  
+  # Remove non-expressed genes
+  sce1 <- sce1[Matrix::rowMeans(counts(sce1)) > 0,]
+  
+  cur_dist <- pairwiseCor(x = sce1, method = "pearson")
+  df.out <- rbind(df.out, data.frame(Cell_type = i,
+                                     Strain = "B6",
+                                     median = median(cur_dist),
+                                     lower = quantile(cur_dist, 0.10),
+                                     upper = quantile(cur_dist, 0.90)))
+  
+  # B6 versus CAST
+  sce2 <- data_evo[,data_evo$Sample == "CAST" & data_evo$CellType == i]
+  sce2 <- sce2[Matrix::rowMeans(counts(sce1)) > 0,]
+  
+  # Shared genes
+  genes <- intersect(rownames(sce1), rownames(sce2))
+  
+  cur_dist <- pairwiseCor(x = sce1[genes,], y = sce2[genes,], method = "pearson")
+  df.out <- rbind(df.out, data.frame(Cell_type = i,
+                                     Strain = "CAST",
+                                     median = median(cur_dist),
+                                     lower = quantile(cur_dist, 0.10),
+                                     upper = quantile(cur_dist, 0.90)))
+  
+  # B6 versus CAROLI
+  sce2 <- data_evo[,data_evo$Sample == "CAROLI" & data_evo$CellType == i]
+  sce2 <- sce2[Matrix::rowMeans(counts(sce1)) > 0,]
+  
+  # Shared genes
+  genes <- intersect(rownames(sce1), rownames(sce2))
+  
+  cur_dist <- pairwiseCor(x = sce1[genes,], y = sce2[genes,], method = "pearson")
+  df.out <- rbind(df.out, data.frame(Cell_type = i,
+                                     Strain = "CAROLI",
+                                     median = median(cur_dist),
+                                     lower = quantile(cur_dist, 0.10),
+                                     upper = quantile(cur_dist, 0.90)))
+}
+
+plot_levels <- levels(data_evo$CellType)
+
+df.out$Cell_type <- factor(df.out$Cell_type, levels = plot_levels)
+df.out$Strain <- factor(df.out$Strain, levels = c("B6", "CAST", "CAROLI"))
+
+df.out <- df.out[!df.out$Cell_type %in% c("Immune", "Leydig", "Sertoli"), ]
+
+df.out.normalized <- do.call("rbind", lapply(unique(df.out$Cell_type), function(cell_type){
+	cur_data <- df.out[df.out$Cell_type == cell_type,]
+	norm_factor <- cur_data[cur_data$Strain == "B6",]$median
+	corrected_matrix <- apply(cur_data[,c("median", "lower", "upper")], 1, function(cur_row){
+								  cur_row - norm_factor})
+	corrected_matrix <- t(corrected_matrix)
+	cbind(cur_data[,c("Cell_type", "Strain")], corrected_matrix)
+}))
+
+strain_correlation <- df.out %>% 
+  dplyr::filter(!Cell_type %in% paste0("S", 12:16)) %>%
+  ggplot() + 
+  geom_errorbar(aes(x = Cell_type, ymin=lower, ymax=upper, group = Strain), width=.1,
+                position = position_dodge(width = 0.75)) +
+  geom_point(aes(Cell_type, median, fill = Strain, group = Strain), 
+             shape = 22, size = 4, position = position_dodge(width = 0.75)) +
+  ylab("Correlation") + 
+  scale_fill_manual(values = c("B6" = "black", "CAST" = "chocolate", 
+                               "CAROLI" = "brown4")) + 
+  theme_classic() + theme(axis.text.x = element_text(angle = 45, hjust= 1), 
+                          text = element_text(size=20)) + 
+  ylim(0, 1) + xlab("") + 
+  geom_point(aes(x = Cell_type, y = 1, col = Cell_type), size = 5) + 
+  scale_color_manual(values = colour_vector, guide = "none") + 
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank()) + 
+  theme_paper(textsize = 30)
+
+strain_correlation
+
+strain_correlation_delta <- df.out.normalized %>%
+  dplyr::filter(!Cell_type %in% paste0("S", 12:16)) %>%
+  ggplot() + 
+    geom_smooth(aes(Cell_type, - median, col = Strain, group = Strain)) +
+  geom_point(aes(Cell_type, - median, fill = Strain, group = Strain), 
+             shape = 21, size = 1) +
+  ylab("Transcriptional \n divergence") + 
+  scale_fill_manual(values = c("B6" = "black", "CAST" = "chocolate", 
+                               "CAROLI" = "brown4")) + 
+  scale_color_manual(values = c("B6" = "black", "CAST" = "chocolate", 
+                               "CAROLI" = "brown4")) + 
+  theme_classic() + 
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(), 
+        plot.margin = unit(c(40, 1, 1, 1), "pt"), 
+        text = element_text(size=30))
+
+arranged_plots <- ggpubr::ggarrange(strain_correlation, strain_correlation_delta, nrow = 2, heights = c(8, 2), align = "v")
+ggsave("./Plots/Figure5/correlation_plot_pearson.pdf", arranged_plots, height = 8, width = 15)
+
+```
+
+Addendum: Check if pearson and cosine similarity give the same results as spearman cor in correlation analysis
+Cosine: 
+
+```{r ssss}
+
+# Loop through cell-types
+cell_types <- unique(data_evo$CellType)
+
+# Data frames to store results
+df.out <- data.frame()
+
+for(i in cell_types){
+  # B6 versus B6
+  
+  print(i)
+  
+  sce1 <- data_evo[,data_evo$Sample == "B6" & data_evo$CellType == i]
+  
+  # Remove non-expressed genes
+  sce1 <- sce1[Matrix::rowMeans(counts(sce1)) > 0,]
+  
+  # calculate cosine similarity among cells
+  m_here <- as.matrix(logcounts(sce1))
+  m_here <- t(t(m_here) / sqrt(colSums(m_here * m_here)))
+  cur_dist <- as_vector(t(m_here) %*% m_here)
+  cur_dist <- cur_dist[cur_dist != 1] # exclude self-self comparisons
+  df.out <- rbind(df.out, data.frame(Cell_type = i,
+                                     Strain = "B6",
+                                     median = median(cur_dist),
+                                     lower = quantile(cur_dist, 0.10),
+                                     upper = quantile(cur_dist, 0.90)))
+  
+  # B6 versus CAST
+  sce2 <- data_evo[,data_evo$Sample == "CAST" & data_evo$CellType == i]
+  sce2 <- sce2[Matrix::rowMeans(counts(sce1)) > 0,]
+  
+  # Shared genes
+  genes <- intersect(rownames(sce1), rownames(sce2))
+  
+  m_here <- as.matrix(logcounts(sce1[genes, ]))
+  n_here <- as.matrix(logcounts(sce2[genes, ]))
+  m_here <- t(t(m_here) / sqrt(colSums(m_here * m_here)))
+  n_here <- t(t(n_here) / sqrt(colSums(n_here * n_here)))
+  cur_dist <- as_vector(t(m_here) %*% n_here)
+  cur_dist <- cur_dist[cur_dist != 1] # exclude self-self comparisons
+  
+  df.out <- rbind(df.out, data.frame(Cell_type = i,
+                                     Strain = "CAST",
+                                     median = median(cur_dist),
+                                     lower = quantile(cur_dist, 0.10),
+                                     upper = quantile(cur_dist, 0.90)))
+  
+  # B6 versus CAROLI
+  sce2 <- data_evo[,data_evo$Sample == "CAROLI" & data_evo$CellType == i]
+  sce2 <- sce2[Matrix::rowMeans(counts(sce1)) > 0,]
+  
+  # Shared genes
+  genes <- intersect(rownames(sce1), rownames(sce2))
+  
+  m_here <- as.matrix(logcounts(sce1[genes, ]))
+  n_here <- as.matrix(logcounts(sce2[genes, ]))
+  m_here <- t(t(m_here) / sqrt(colSums(m_here * m_here)))
+  n_here <- t(t(n_here) / sqrt(colSums(n_here * n_here)))
+  cur_dist <- as_vector(t(m_here) %*% n_here)
+  cur_dist <- cur_dist[cur_dist != 1] # exclude self-self comparisons
+  
+  df.out <- rbind(df.out, data.frame(Cell_type = i,
+                                     Strain = "CAROLI",
+                                     median = median(cur_dist),
+                                     lower = quantile(cur_dist, 0.10),
+                                     upper = quantile(cur_dist, 0.90)))
+}
+
+plot_levels <- levels(data_evo$CellType)
+
+df.out$Cell_type <- factor(df.out$Cell_type, levels = plot_levels)
+df.out$Strain <- factor(df.out$Strain, levels = c("B6", "CAST", "CAROLI"))
+
+df.out <- df.out[!df.out$Cell_type %in% c("Immune", "Leydig", "Sertoli"), ]
+
+df.out.normalized <- do.call("rbind", lapply(unique(df.out$Cell_type), function(cell_type){
+	cur_data <- df.out[df.out$Cell_type == cell_type,]
+	norm_factor <- cur_data[cur_data$Strain == "B6",]$median
+	corrected_matrix <- apply(cur_data[,c("median", "lower", "upper")], 1, function(cur_row){
+								  cur_row - norm_factor})
+	corrected_matrix <- t(corrected_matrix)
+	cbind(cur_data[,c("Cell_type", "Strain")], corrected_matrix)
+}))
+
+strain_correlation <- df.out %>% 
+  dplyr::filter(!Cell_type %in% paste0("S", 12:16)) %>%
+  ggplot() + 
+  geom_errorbar(aes(x = Cell_type, ymin=lower, ymax=upper, group = Strain), width=.1,
+                position = position_dodge(width = 0.75)) +
+  geom_point(aes(Cell_type, median, fill = Strain, group = Strain), 
+             shape = 22, size = 4, position = position_dodge(width = 0.75)) +
+  ylab("Correlation") + 
+  scale_fill_manual(values = c("B6" = "black", "CAST" = "chocolate", 
+                               "CAROLI" = "brown4")) + 
+  theme_classic() + theme(axis.text.x = element_text(angle = 45, hjust= 1), 
+                          text = element_text(size=20)) + 
+  ylim(0, 1) + xlab("") + 
+  geom_point(aes(x = Cell_type, y = 1, col = Cell_type), size = 5) + 
+  scale_color_manual(values = colour_vector, guide = "none") + 
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank()) + 
+  theme_paper(textsize = 30)
+
+strain_correlation
+
+strain_correlation_delta <- df.out.normalized %>%
+  dplyr::filter(!Cell_type %in% paste0("S", 12:16)) %>%
+  ggplot() + 
+    geom_smooth(aes(Cell_type, - median, col = Strain, group = Strain)) +
+  geom_point(aes(Cell_type, - median, fill = Strain, group = Strain), 
+             shape = 21, size = 1) +
+  ylab("Transcriptional \n divergence") + 
+  scale_fill_manual(values = c("B6" = "black", "CAST" = "chocolate", 
+                               "CAROLI" = "brown4")) + 
+  scale_color_manual(values = c("B6" = "black", "CAST" = "chocolate", 
+                               "CAROLI" = "brown4")) + 
+  theme_classic() + 
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(), 
+        plot.margin = unit(c(40, 1, 1, 1), "pt"), 
+        text = element_text(size=30))
+
+arranged_plots <- ggpubr::ggarrange(strain_correlation, strain_correlation_delta, nrow = 2, heights = c(8, 2), align = "v")
+ggsave("./Plots/Figure5/correlation_plot_pearson.pdf", arranged_plots, height = 8, width = 15)
+
+```

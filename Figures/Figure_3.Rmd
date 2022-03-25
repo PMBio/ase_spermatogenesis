@@ -1,0 +1,494 @@
+---
+title: "Figure 3"
+author: "Jasper Panten"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "~/Desktop/Projects/ASE_Spermatogenesis_Paper_rerun/")
+```
+
+
+```{r ss}
+library(ggplot2)
+library(tidyverse)
+
+source("./Scripts/General/auxiliary.R")
+source("./Scripts/General/reuse_functions.R")
+
+theme_paper <- function(textsize = 20){
+  theme(panel.background = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(colour = "black"),
+        panel.border = element_rect(colour = "black", fill=NA, size=1), 
+        text = element_text(size = textsize))
+}
+```
+
+## This script reproduces Figure 3
+# Analysis feeding into this:
+./Analysis/Figure3_fit_trans_models.Rmd
+
+```{r asdasdasda}
+#### features of genes with cis/trans effects
+
+genes_test <- readRDS("./Data/processed/genes_test.rds")
+gene_names <- rownames(genes_test)
+genes_test <- data.frame(apply(genes_test, 2, function(x){as.numeric(x)}))
+rownames(genes_test) <- gene_names
+
+genes_test$BF_cis_static <- genes_test$NLL_null - genes_test$NLL_alt
+genes_test[genes_test$NLL_null < 0 | genes_test$NLL_alt < 0, ]$BF_cis_static <- 0
+genes_test[genes_test$BF_cis_static < 0, ]$BF_cis_static <- 0
+
+make_pseudotime_smooth <- function(data, pt, n_partitions = 100){
+  pseudotime_here <- pt
+  pseudotime_here <- pseudotime_here - min(pseudotime_here)
+  pseudotime_here <- pseudotime_here / max(pseudotime_here) # between 0 and 1
+  intervals <- c(0, 1:n_partitions / n_partitions)
+  
+  expression_smoothed <- do.call("cbind", 
+                                 lapply(1:n_partitions, function(i){
+                                   p_lower <- intervals[i]
+                                   p_upper <-  intervals[i + 1]
+                                   ix <- which(p_lower <= pseudotime_here & pseudotime_here <= p_upper)
+                                   rowMeans(data[,ix])
+                                 }))
+  expression_smoothed
+}
+
+data_use <- readRDS("./Data/processed/sce_merged_new.rds")
+data_use <- data_use[,data_use$Species == "B6xCAST"]
+pseudotime_here <- data_use$Pseudotime
+full_expression <- readRDS("./Data/processed/sce_merged_new.rds")
+
+```
+
+plot example gene for 3a
+
+```{r asd1}
+
+list_data <- readRDS("./Data/processed//binned_data.rds")
+
+data_f0_b6 <- list_data[[1]]
+data_f0_cast <- list_data[[2]]
+data_f1_b6 <- list_data[[3]]
+data_f1_cast <- list_data[[4]]
+
+results_per_gene_expressed_intervals <- readRDS("./Data/processed/trans_effects_expressed_intervals_new.rds")
+names(results_per_gene_expressed_intervals) <- rownames(genes_test)
+
+plot_cis_trans_gene_mean <- function(gene){
+  
+  asd <- results_per_gene_expressed_intervals[[gene]]
+  
+  for_plotting <- lapply(1:length(asd[[5]][[2]]), function(i){
+    xx = asd[[5]][[2]][[i]]
+    xx = data.frame(do.call("cbind", xx))
+    xx$Sample = i
+    xx$X3 <- sqrt(xx$X3)
+    xx})
+  
+  for_plotting_merged <- do.call("rbind", for_plotting)
+  for_plotting_merged$Sample <- as.factor(for_plotting_merged$Sample)
+  for_plotting_merged$mean <- for_plotting_merged$X2
+
+  data_plot <- data.frame(
+    "F0_P" = data_f0_b6[gene, ],
+    "F0_M" = data_f0_cast[gene, ],
+    "F1_P" = data_f1_b6[gene, ],
+    "F1_M" = data_f1_cast[gene, ]
+  )
+  
+  norm_factors <- c(sum(colSums(data_f0_b6)), 
+                    sum(colSums(data_f0_cast)))
+  norm_factors <- norm_factors / norm_factors[[1]]
+  
+  data_plot[,1:2] <- data.frame(t(t(data_plot[,1:2]) / norm_factors))
+  data_plot$Interval <- 1:nrow(data_plot)
+  for_plotting_merged$Sample <- ifelse(for_plotting_merged$Sample == 1, "F0", "F1")
+  
+  ggplot(for_plotting_merged, aes(X1, y = rev_logit(X2), col = Sample)) + 
+    geom_line(linetype = "dashed", size = 1.5) + 
+    scale_color_manual(values = c("F0" = "black", "F1" = "darkgrey")) + 
+    # geom_ribbon(aes(ymin = rev_logit(error_lower), ymax = rev_logit(error_upper), fill = Sample), 
+    #             alpha = 0.2) + 
+    theme(legend.position="top") + 
+    geom_point(data = data_plot, aes(Interval, (F0_P) / (F0_M + F0_P)), col = "black", size = 2) + 
+    geom_point(data = data_plot, aes(Interval, (F1_P) / (F1_M + F1_P)), col = "darkgrey", size = 2) + 
+    xlim(0, 100) + scale_fill_manual(values = c("red", "darkgrey")) + ylim(c(0, 1)) + xlab("Pseudotime") + 
+    ylab("Allelic Imbalance") + theme_classic() + ggtitle(gene) + 
+    geom_hline(yintercept = 0.5, linetype = "dashed") + 
+    theme(text = element_text(size = 30), legend.position = "None") + 
+    scale_x_continuous(breaks = c(0, 50, 100)) + 
+    scale_y_continuous(breaks = c(0, 0.5, 1), limits = c(0, 1))
+}
+
+plot_cis_trans_gene_mean("Dnajc2")
+ggsave("./Plots/Figure3/Fig3_A.pdf", width = 10, height = 5)
+
+```
+
+plot scatterplot of static vs dynamic
+
+```{r sssss}
+
+ggplot(genes_test, aes(BF_trans_static, BF_trans_dynamic, col = BF_trans > 10)) + 
+  geom_point(data = genes_test[genes_test$BF_trans_dynamic < 10 & genes_test$BF_trans_static < 10 ,], col = "grey",  alpha = 0.3, size = 2) +
+  geom_point(data = genes_test[genes_test$BF_trans_dynamic > 10 | genes_test$BF_trans_static > 10 ,], col = "black",  alpha = 1, size = 2) +
+  geom_hline(yintercept = 10, linetype = "dashed", col = "black") + 
+  geom_vline(xintercept = 10, linetype = "dashed", col = "black") + 
+  xlab("BF static") + ylab("BF dynamic") + theme_classic() + 
+  annotate("rect", xmin=10, xmax=Inf, ymin=-Inf, ymax=10, alpha=0.1, fill="darkred") + 
+  annotate("rect", xmin=-Inf, xmax=Inf, ymin=10, ymax=Inf, alpha=0.1, fill="orange") + 
+  theme(text = element_text(size=28), 
+        panel.background = element_blank(), 
+        panel.border = element_rect(colour = "black", fill=NA, size=1)) + 
+  annotate(x = )
+  xlim(0, 80) + ylim(0, 30)
+
+ggsave("./Plots/Figure3/Fig3_C.pdf")
+```
+
+plot of pastcons scores
+
+```{r asd4}
+
+library(ggplot2)
+
+features_prepared <- data.frame(readRDS("./Data/processed/all_features.rds"))
+exon_df_results <- setNames(features_prepared$VAR_evolution_phastcons_exon, rownames(features_prepared))
+intron_df_results <- setNames(features_prepared$VAR_evolution_phastcons_exon, rownames(features_prepared))
+five_utr_df_results <- setNames(features_prepared$VAR_evolution_phastcons_five_utr, rownames(features_prepared))
+three_utr_df_results <- setNames(features_prepared$VAR_evolution_phastcons_three_utr, rownames(features_prepared))
+promoter_df_results <- setNames(features_prepared$VAR_evolution_phastcons_promoter, rownames(features_prepared))
+
+# exon_df_results <- readRDS("./Data/processed/phastcons_scores.rds")
+# intron_df_results <- readRDS("./Data/processed/phastcons_scores.rds")
+# five_utr_df_results <- readRDS("./Data/processed/phastcons_scores.rds")
+# three_utr_df_results <- readRDS("./Data/processed/phastcons_scores.rds")
+# promoter_df_results <- readRDS("./Data/processed/phastcons_scores.rds")
+
+covariate <- ifelse(genes_test$BF_trans_static > 10, "static", "conserved")
+covariate[genes_test$BF_trans_dynamic > 10] <- "dynamic"
+
+summary_df <- data.frame(
+  Gene = rownames(genes_test), 
+  Score_exon = exon_df_results[rownames(genes_test)],
+  Score_intron = intron_df_results[rownames(genes_test)],
+  Score_five_utr = five_utr_df_results[rownames(genes_test)],
+  Score_three_utr = three_utr_df_results[rownames(genes_test)], 
+  Score_promoter = promoter_df_results[rownames(genes_test)],
+  Covariate = covariate
+)
+
+summary_df_melt <- reshape2::melt(summary_df)
+summary_df_melt$Covariate <- factor(summary_df_melt$Covariate, levels = c("conserved", "static", "dynamic"))
+summary_df_melt <- summary_df_melt[!is.na(summary_df_melt$Covariate), ]
+
+comparisons <- list(
+  c("conserved", "static"), 
+  c("conserved", "dynamic"), 
+  c("static", "dynamic")
+)
+
+plot_df <- summary_df_melt[summary_df_melt$variable %in% c("Score_exon"), ]
+plot_df$variable <- unlist(list("Score_exon" = "Exon", "Score_promoter" = "Promoter")[as.character(plot_df$variable)])
+
+ggplot(plot_df, aes(x = Covariate, y = value)) + 
+  #geom_violin(aes(fill = Covariate), outlier.color = NA) + 
+  geom_boxplot(width = 0.8, fill = "grey") + 
+  theme_classic() + ylab("PhastCons Score") + 
+  ggpubr::stat_compare_means(comparisons = comparisons, aes(label = ..p.signif..), method = "wilcox.test") + 
+  facet_wrap(~variable, scales = "free") + xlab("") + 
+  scale_fill_manual(values = c("lightgrey", "darkgrey", "#ace6de")) + 
+  theme(legend.position = "None") + 
+  theme(text = element_text(size = 40)) + 
+  theme(axis.text.x=element_text(angle = 30, hjust = 1))
+
+ggsave("./Plots/Figure3/Fig3_D.pdf", width = 6, height = 8)
+```
+
+
+```{r asdassss}
+
+genes_test_here <- genes_test
+  
+genes_test_here <- genes_test_here[!is.na(rownames(genes_test_here)), ]
+genes_test_here <- genes_test_here[!is.na(genes_test_here$chromosome), ]
+genes_test_here <- genes_test_here[!is.na(genes_test_here$BF_trans), ]
+genes_test_here <- genes_test_here[!is.na(genes_test_here$BF_cis_dynamic), ]
+genes_test_here <- genes_test_here[!is.na(genes_test_here$BF_trans_static), ]
+genes_test_here <- genes_test_here[!is.na(genes_test_here$BF_trans_dynamic), ]
+
+with_cis_effects <- genes_test_here[genes_test_here$BF_cis_dynamic > 10 | genes_test_here$BF_cis_static > 10, ]
+with_trans_effects <- genes_test_here[genes_test_here$BF_trans_dynamic > 10 | genes_test_here$BF_trans_static > 10, ]
+
+# do a proportion test for significance
+cis_effects <- nrow(with_cis_effects)
+cis_effects_dynamic <- sum(genes_test_here$BF_cis_dynamic > 10)
+trans_effects <- nrow(with_trans_effects)
+trans_effects_dynamic <- sum(with_trans_effects$BF_trans_dynamic > 10)
+
+pval_prop <- prop.test(
+  x = c(cis_effects_dynamic, trans_effects_dynamic), 
+  n = c(cis_effects - cis_effects_dynamic, trans_effects - trans_effects_dynamic)
+)$p.value
+pval_prop
+
+data_plot <- rbind(data.frame(Genes = rownames(with_cis_effects), 
+                              Effect = "cis", 
+                              Kind = ifelse(with_cis_effects$BF_cis_dynamic > 10, "dynamic", "static")), 
+                   data.frame(Genes = rownames(with_trans_effects), 
+                              Effect = "trans", 
+                              Kind = ifelse(with_trans_effects$BF_trans_dynamic > 10, "dynamic", "static")))
+data_plot$Kind <- factor(data_plot$Kind, levels = c("static", "dynamic"))
+data_plot$Effect <- factor(data_plot$Effect, levels = c("trans", "cis"))
+
+ggplot(data_plot, aes(x = factor(Effect, levels = c("cis", "trans")),  fill = Kind)) + 
+  geom_bar(position = "fill", alpha = 0.5, col = "black") + 
+  theme_classic() + xlab("") + scale_fill_manual(values = c("darkred", "orange")) + ylab("Proportion of dynamic effects") + 
+  theme(text = element_text(size = 20)) + 
+  scale_y_continuous(limits = c(0,1.20), expand = c(0, 0), n.breaks = 2) + 
+  #annotate(geom = "text", label = as.expression(bquote(p < 0.001)), x = 1.5, y = 1.1, size = 10, angle = -90) + 
+  annotate(geom = "text", label = "***", x = 1.5, y = 1.05, size = 10, angle = -90) + 
+  annotate(geom = "text", label = paste0(cis_effects_dynamic, "/", (cis_effects - cis_effects_dynamic)), x = 1, y = 0.9, size = 5) + 
+  annotate(geom = "text", label = paste0(trans_effects_dynamic, "/", (trans_effects - trans_effects_dynamic)), x = 2, y = 0.9, size = 5)
+
+ggsave("./Plots/Figure3/Fig3_E.pdf", width = 7, height = 10)
+```
+
+for supplement: 
+correlation and calibration of BFs for cis-effects
+
+```{r ssss}
+
+results_polynomial_kernel <- readRDS("./Data/processed/Dali_scoreTest_poly.csv")
+genes_test_here$dali_dynamic_pval <- results_polynomial_kernel[rownames(genes_test_here)]
+
+ggplot(genes_test_here, aes(BF_cis_dynamic, -log10(dali_pval_polynomial))) + 
+  geom_point() + geom_smooth() + 
+  theme_paper(textsize = 50) + 
+  xlab("GP-based dynamic cis model \n (log Bayes Factor)") + 
+  ylab("scDALI dynamic cis model \n (-log10(p-value))")
+ggsave("./Plots/FigureS3/FigS3_1.pdf")
+
+testytest <- pROC::roc(genes_test_here$BF_cis_dynamic > 10, -log10(genes_test_here$dali_pval_polynomial))
+data.frame(
+  spec = testytest$specificities, 
+  sens = testytest$sensitivities
+) %>% ggplot(aes(1 - spec, sens)) + geom_line() + 
+  theme_paper(textsize = 30) + coord_fixed() + geom_abline() + 
+  annotate(x = 0.2, y = 1, geom = "text", label = paste0("AUC: ", round(testytest$auc, digits = 3)), size = 15) + 
+  xlab("Sensitivity") + ylab("Specificity") + ggtitle("Identifying dynamic scDALI-effects using BFs")
+ggsave("./Plots/FigureS3/FigS3_2.pdf")
+
+```
+
+for supplement: 
+effect sizes vs bayes factors trans model
+
+```{r ssss}
+
+# exclude 3 very high effect-size genes with no significant effect
+
+genes_test_here <- genes_test_here %>%
+  dplyr::filter(abs(median_trans) < 0.3)
+
+dim(genes_test)
+dim(genes_test_here)
+
+# static effects, static measure
+p1 <- genes_test %>%
+  ggplot(aes(abs(median_trans), BF_trans_static)) + geom_point(col = "darkred") + theme_paper(textsize = 30) + 
+  geom_smooth(method = "lm", linetype = "dashed", col = "black") + 
+  annotate(geom = "text", x = 0.05, y = 85, label = "Static trans", size = 10) + 
+  xlab("Static effect size") + ylab("Evidence (log BF)") + xlim(0, 0.3)
+
+# static effects, dynamic measure
+p2 <- genes_test %>%
+  ggplot(aes(qdiff_trans, BF_trans_static)) + geom_point(col = "darkred") + theme_paper(textsize = 30) + 
+  geom_smooth(method = "lm", linetype = "dashed", col = "black") + 
+  annotate(geom = "text", x = 0.05, y = 85, label = "Static trans", size = 10) + 
+  xlab("Dynamic effect size") + ylab("Evidence (log BF)") + xlim(0, 0.3)
+
+# static effects, static measure
+p3 <- genes_test %>%
+  ggplot(aes(abs(median_trans), BF_trans_dynamic)) + geom_point(col = "orange") + theme_paper(textsize = 30) + 
+  geom_smooth(method = "lm", linetype = "dashed", col = "black") + 
+  annotate(geom = "text", x = 0.07, y = 25, label = "Dynamic trans", size = 10) + 
+  xlab("Static effect size") + ylab("Evidence (log BF)") + xlim(0, 0.3)
+
+# static effects, dynamic measure
+p4 <- genes_test %>%
+  ggplot(aes(qdiff_trans, BF_trans_dynamic)) + geom_point(col = "orange") + theme_paper(textsize = 30) + 
+  geom_smooth(method = "lm", linetype = "dashed", col = "black") + 
+  annotate(geom = "text", x = 0.07, y = 25, label = "Dynamic trans", size = 10) + 
+  xlab("Dynamic effect size") + ylab("Evidence (log BF)") + xlim(0, 0.3) 
+
+pp <- gridExtra::arrangeGrob(p1, p2, p3, p4, nrow = 2)
+ggsave("./Plots/FigureS3/FigS3_3.pdf", pp)
+
+```
+
+for supplement: more examples of trans-effects
+
+```{r ssss}
+
+plot_gene_cis_trans <- function(gene, textsize = 10){
+  
+  asd <- results_per_gene_expressed_intervals[[gene]]
+  
+  for_plotting <- lapply(1:length(asd[[5]][[2]]), function(i){
+    xx = asd[[5]][[2]][[i]]
+    xx = data.frame(do.call("cbind", xx))
+    xx$Sample = i
+    xx$X3 <- sqrt(xx$X3)
+    xx})
+  
+  for_plotting_merged <- do.call("rbind", for_plotting)
+  for_plotting_merged$Sample <- as.factor(for_plotting_merged$Sample)
+  for_plotting_merged$mean <- for_plotting_merged$X2
+
+  data_plot <- data.frame(
+    "F0_P" = data_f0_b6[gene, ],
+    "F0_M" = data_f0_cast[gene, ],
+    "F1_P" = data_f1_b6[gene, ],
+    "F1_M" = data_f1_cast[gene, ]
+  )
+  
+  norm_factors <- c(sum(colSums(data_f0_b6)), 
+                    sum(colSums(data_f0_cast)))
+  norm_factors <- norm_factors / norm_factors[[1]]
+  
+  data_plot[,1:2] <- data.frame(t(t(data_plot[,1:2]) / norm_factors))
+  data_plot$Interval <- 1:nrow(data_plot)
+  for_plotting_merged$Sample <- ifelse(for_plotting_merged$Sample == 1, "F0", "F1")
+  
+  p1 <- ggplot(for_plotting_merged, aes(X1, y = rev_logit(X2), col = Sample)) + 
+    geom_line(linetype = "dashed", size = 1.5) + 
+    scale_color_manual(values = c("F0" = "black", "F1" = "darkgrey")) + 
+    theme(legend.position="top") + 
+    geom_point(data = data_plot, aes(Interval, (F0_P) / (F0_M + F0_P)), col = "black", size = 2) + 
+    geom_point(data = data_plot, aes(Interval, (F1_P) / (F1_M + F1_P)), col = "darkgrey", size = 2) + 
+    xlim(0, 100) + scale_fill_manual(values = c("red", "darkgrey")) + ylim(c(0, 1)) + xlab("Pseudotime") + 
+    ylab("Allelic Imbalance") + theme_classic() + ggtitle(gene) + 
+    geom_hline(yintercept = 0.5, linetype = "dashed") + 
+    theme(text = element_text(size = textsize), legend.position = "None") + 
+    scale_x_continuous(breaks = c(0, 50, 100)) + 
+    scale_y_continuous(breaks = c(0, 0.5, 1), limits = c(0, 1))
+  
+  data.frame(
+    X = for_plotting_merged[for_plotting_merged$Sample == "F0", ]$X1, 
+    trans_effect = rev_logit(for_plotting_merged[for_plotting_merged$Sample == "F1", ]$mean) - rev_logit(for_plotting_merged[for_plotting_merged$Sample == "F0", ]$mean)
+  ) %>%
+    ggplot(aes(X, abs(trans_effect))) + geom_line() + theme_paper(textsize = textsize) + ylim(0, 0.5) + geom_hline(yintercept = 0, linetype = "dashed") + 
+    xlab("Pseudotime") + ylab("Trans-effect (abs(F1 - F0))") + 
+    annotate(geom = "text", label = paste0("log BF (trans-dynamic): ", round(genes_test[gene, ]$BF_trans_dynamic, digits = 2)), x = 25, y = 0.45, size = 10) -> p2
+  list(p1, p2)
+}
+
+tt <- plot_gene_cis_trans("Rnaseh2a", textsize = 30)
+plot(gridExtra::arrangeGrob(tt[[1]], tt[[2]]))
+ggsave("./Plots/FigureS3/FigS3_4_a.pdf", gridExtra::arrangeGrob(tt[[1]], tt[[2]]), width = 20, height = 10)
+
+tt <- plot_gene_cis_trans("Tcp1", textsize = 30)
+plot(gridExtra::grid.arrange(tt[[1]], tt[[2]]))
+ggsave("./Plots/FigureS3/FigS3_4_b.pdf", gridExtra::arrangeGrob(tt[[1]], tt[[2]]), width = 20, height = 10)
+
+tt <- plot_gene_cis_trans("Guk1", textsize = 30)
+plot(gridExtra::grid.arrange(tt[[1]], tt[[2]]))
+ggsave("./Plots/FigureS3/FigS3_4_c.pdf", gridExtra::arrangeGrob(tt[[1]], tt[[2]]), width = 20, height = 10)
+
+tt <- plot_gene_cis_trans("4930503B20Rik", textsize = 30)
+plot(gridExtra::grid.arrange(tt[[1]], tt[[2]]))
+ggsave("./Plots/FigureS3/FigS3_4_d.pdf", gridExtra::arrangeGrob(tt[[1]], tt[[2]]), width = 20, height = 10)
+
+# look at trans effects across pseudotime for all genes
+norm_factors <- c(sum(colSums(data_f0_b6)), 
+                  sum(colSums(data_f0_cast)))
+norm_factors <- norm_factors / norm_factors[[1]]
+
+# dynamic_trans_genes <- 
+asd <- results_per_gene_expressed_intervals[[gene]]
+
+normalized_trajectories <- lapply(rownames(genes_test[genes_test$BF_trans_dynamic > 10 & !is.na(genes_test$BF_trans_dynamic), ]), function(gene){
+  asd <- results_per_gene_expressed_intervals[[gene]]
+  
+  for_plotting <- lapply(1:length(asd[[5]][[2]]), function(i){
+    xx = asd[[5]][[2]][[i]]
+    xx = data.frame(do.call("cbind", xx))
+    xx$Sample = i
+    xx$X3 <- sqrt(xx$X3)
+    xx})
+  
+  for_plotting_merged <- do.call("rbind", for_plotting)
+  for_plotting_merged$Sample <- as.factor(for_plotting_merged$Sample)
+  for_plotting_merged$mean <- for_plotting_merged$X2
+
+  data_plot <- data.frame(
+    "F0_P" = data_f0_b6[gene, ],
+    "F0_M" = data_f0_cast[gene, ],
+    "F1_P" = data_f1_b6[gene, ],
+    "F1_M" = data_f1_cast[gene, ]
+  )
+  
+  norm_factors <- c(sum(colSums(data_f0_b6)), 
+                    sum(colSums(data_f0_cast)))
+  norm_factors <- norm_factors / norm_factors[[1]]
+  
+  data_plot[,1:2] <- data.frame(t(t(data_plot[,1:2]) / norm_factors))
+  data_plot$Interval <- 1:nrow(data_plot)
+  for_plotting_merged$Sample <- ifelse(for_plotting_merged$Sample == 1, "F0", "F1")
+  to_return <- data.frame(
+    F0 = rev_logit(for_plotting_merged[for_plotting_merged$Sample == "F0", ]$X2), 
+    F1 = rev_logit(for_plotting_merged[for_plotting_merged$Sample == "F1", ]$X2)
+  )
+  to_return$F0 - to_return$F1
+})
+names(normalized_trajectories) <- rownames(genes_test[genes_test$BF_trans_dynamic > 10 & !is.na(genes_test$BF_trans_dynamic), ])
+
+pheatmap(abs(do.call("rbind", normalized_trajectories)), cluster_rows = F, cluster_cols = F)
+
+# subset on the highest quantile
+
+do.call("rbind", lapply(normalized_trajectories, function(x){
+  x = abs(x)
+  as.numeric(x > quantile(x, 0.9))
+})) -> plot_heatmap
+rownames(plot_heatmap) <- rownames(genes_test[genes_test$BF_trans_dynamic > 10 & !is.na(genes_test$BF_trans_dynamic), ])
+colnames(plot_heatmap) <- paste0("Bin", 1:ncol(plot_heatmap))
+
+pdf("./Plots/FigureS3/FigS3_5.pdf")
+pheatmap(plot_heatmap, cluster_rows = F, cluster_cols = F, show_colnames = F, 
+         col = c("grey", "white", "white", "white", "white", "white", "white", "orange"), 
+         fontsize = 15)
+dev.off()
+```
+
+Supplement: check total expression level vs detection
+
+```{r sss}
+
+genes_test %>%
+  ggplot(aes(coverage_total, BF_trans_dynamic)) + geom_point() + scale_x_log10() + theme_paper(textsize = 30)
+ggsave("./Plots/FigureS3/FigS3_6.pdf")
+
+genes_test %>%
+  add_column(expression_interval = cut(log10(genes_test$coverage_total), breaks = 8, dig.lab = 2)) %>%
+  ggplot(aes(expression_interval, BF_trans_dynamic)) + geom_jitter() + geom_boxplot(outlier.color = NA) + 
+  theme_paper(textsize = 35) + 
+  xlab("log10(Allelic coverage)") + 
+  ylab("Dynamic trans (logBF)") + 
+  geom_hline(yintercept = 10, linetype = "dashed")
+ggsave("./Plots/FigureS3/FigS3_6b.pdf")
+
+```

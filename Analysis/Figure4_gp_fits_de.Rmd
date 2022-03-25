@@ -1,0 +1,311 @@
+---
+title: "fit_de_models"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r def_functions}
+
+## ---------------------- dali functions ---------------------- 
+
+logit <- function(x){
+  log(x / (1 - x))
+}
+
+rev_logit <- function(x){
+  1 / (1 + exp(-x))
+}
+
+library(reticulate)
+use_python("/Users/jasper/Library/r-miniconda/bin/python", required = T)
+dali_path = "~/Desktop/PhD/Projects/ASE_Spermatogenesis/Scripts/dali/"
+```
+
+# get variable degs using ASE-GP model for 
+# a) Cast vs B6 F0s
+# b) Pairwise comps Caroli vs B6 (first), Caroli vs Cast, Cast vs B6 -- slight difference here because we don't use ASE signal but total
+# for static cis we need to compare posterior x ~ N(m, I), x ~ N(0, I) (setting posterior mean to zero)
+
+
+```{r load_libraries_and_data}
+
+library(scran)
+library(scater)
+library(viridis)
+library(pheatmap)
+library(zoo)
+library(tidyverse)
+source("~/Desktop/PhD/RCode/Multipurpose/auxiliary.R")
+
+setwd("~/Desktop/Projects/ASE_Spermatogenesis_Paper_rerun/")
+
+data_use <- readRDS("./Data/processed/sce_merged_new.rds")
+data_use <- annotate_chromosome_sce(data_use)
+
+dali_results <- readRDS("./Data/processed/Dali_full_results.rds")
+genes_test <- dali_results[dali_results$dali_pval_polynomial <= 1, ]
+genes_test <- genes_test[!grepl("NA", rownames(genes_test)), ]
+
+list_data <- readRDS("./Data/processed/binned_data.rds")
+
+data_f0_b6 <- list_data[[1]]
+data_f0_cast <- list_data[[2]]
+data_f1_b6 <- list_data[[3]]
+data_f1_cast <- list_data[[4]]
+
+# compute trans effects as r_F0 - r_F1, stabilize rate estimates with pseudocounts
+
+# Normalize f0 data
+genes_use <- rownames(genes_test)
+chromosome_genes_use <- rowData(data_use[rownames(genes_test), ])$chromosome_name
+chromosome_genes_use[is.na(chromosome_genes_use)] <- "NA"
+table(chromosome_genes_use)
+genes_use <- genes_use[!chromosome_genes_use %in% c("MT", "X")]
+
+sfs = c(sum(data_f0_b6), sum(data_f0_cast)) / sum(data_f0_b6)
+data_f0_b6_norm <- data_f0_b6 / sfs[[1]]
+data_f0_cast_norm <- data_f0_cast / sfs[[2]]
+
+rs_f0_noStab <- (data_f0_b6_norm[genes_use, ]) / (data_f0_b6_norm[genes_use, ] + data_f0_cast_norm[genes_use, ])
+
+total_exp <- data_f0_b6 + data_f0_cast + data_f1_b6 + data_f1_cast
+total_exp <- total_exp[genes_use,]
+
+```
+
+```{python python_models}
+
+import gpflow
+import numpy as np
+import matplotlib.pyplot as plt
+import tensorflow as tf
+from gpflow.utilities import print_summary, set_trainable, to_default_float
+from gpflow.mean_functions import *
+import matplotlib.pyplot as plt
+#from scipy.stats import chi2
+import pandas as pd
+
+# def plot(m):
+#   Xtest = np.linspace(0, 100, 100)[:, None]
+#   mu, var = m.predict_f(np.hstack((Xtest, np.zeros_like(Xtest))))
+#   out1 = [Xtest, mu.numpy(), var.numpy()]
+#   mu, var = m.predict_f(np.hstack((Xtest, np.ones_like(Xtest))))
+#   out2 = [Xtest, mu.numpy(), var.numpy()]
+#   return([out1, out2])
+
+def plot(m):
+  Xtest = np.linspace(0, 100, 100)[:, None]
+  mu, var = m.predict_f(Xtest)
+  out = [Xtest, mu.numpy(), var.numpy()]
+  return([out])
+
+def fit_vanilla_one_sample(X, Y, model = "cis_dynamic",  n_iterations = 100):
+  # model: ... 
+  X = np.atleast_2d(np.array(X)).transpose()
+  Y = np.atleast_2d(np.array(Y)).transpose()
+  X = X.astype("float64")
+  Y = Y.astype("float64")
+  #
+  #
+  # Base kernel
+  k = gpflow.kernels.Matern52()
+  k_const = gpflow.kernels.Constant()
+  #
+  # Coregion kernel
+  # kernel:
+  if ((model == "conserved") | (model == "cis_static")):
+    kern = k_const
+  if ((model == "cis_dynamic")):
+    kern = k
+  lik = gpflow.likelihoods.Gaussian()
+  #
+  mean_function = Constant()
+  m = gpflow.models.VGP((X, Y), kernel=kern, likelihood = lik, mean_function = mean_function)
+  # fit the covariance function parameters
+  gpflow.optimizers.Scipy().minimize(
+    m.training_loss, m.trainable_variables, options=dict(maxiter=n_iterations), method="L-BFGS-B",
+  )
+  predictions = plot(m)
+  likelihood = m.maximum_log_likelihood_objective().numpy()
+  return([m, predictions, likelihood])
+
+
+# 
+# X = r.X_augmented_run
+# Y = r.Y_augmented_run
+# 
+# X = np.atleast_2d(np.array(X)).transpose()
+# Y = np.atleast_2d(np.array(Y)).transpose()
+# X = X.astype("float64")
+# Y = Y.astype("float64")
+# #
+# #
+# # Base kernel
+# k = gpflow.kernels.Matern52()
+# k_const = gpflow.kernels.Constant()
+# #
+# # Coregion kernel
+# # kernel:
+# if ((model == "conserved") | (model == "cis_static")):
+#   kern = k_const
+# if ((model == "cis_dynamic")):
+#   kern = k
+# lik = gpflow.likelihoods.Gaussian()
+# #
+# mean_function = Constant()
+# m = gpflow.models.VGP((X, Y), kernel=kern, likelihood = lik, mean_function = mean_function)
+# # fit the covariance function parameters
+# gpflow.optimizers.Scipy().minimize(
+#   m.training_loss, m.trainable_variables, options=dict(maxiter=n_iterations), method="L-BFGS-B",
+# )
+# predictions = plot(m)
+# likelihood = m.maximum_log_likelihood_objective().numpy()
+
+# fit_vanilla_one_sample(X, Y)
+
+```
+
+```{r sssss}
+
+run_coreg_gp_python_expressed_intervals_new <- function(gene){
+  
+  # data_plot <- data.frame(
+  #   "F0_P" = data_f0_b6[gene, ],
+  #   "F0_M" = data_f0_cast[gene, ],
+  #   "F1_P" = data_f1_b6[gene, ],
+  #   "F1_M" = data_f1_cast[gene, ]
+  # )
+  
+  # norm_factors <- c(sum(colSums(data_f0_b6)), 
+  #                   sum(colSums(data_f0_cast)), 
+  #                   sum(colSums(data_f1_b6)), 
+  #                   sum(colSums(data_f1_cast)))
+  # norm_factors <- norm_factors / norm_factors[[1]]
+  # 
+  # data_plot <- t(t(data_plot) / norm_factors)
+  # data_plot <- data_plot + min(data_plot)
+  
+  data_plot_ratio <- data.frame(
+    FC_F0 = rs_f0_noStab[gene, ],
+    Interval = 1:ncol(rs_f0_noStab)
+  )
+  
+  # get intervals in which gene is expressed
+  # how to choose cutoff?
+  intervals_test <- total_exp[gene, ] > 0.5
+  
+  print(table(intervals_test))
+  
+  if (sum(intervals_test) < 5){
+    print("Not enough intervals to test")
+    return(list(NA, NA, NA))
+  }
+  
+  data_plot_ratio <- data_plot_ratio[intervals_test, ]
+  
+  x_test <- as.double(data_plot_ratio$Interval)
+  y_test <- logit(data_plot_ratio$FC_F0)
+
+  X_augmented = as.matrix(x_test)
+  Y_augmented = as.matrix(y_test)
+  
+  #return(list(X_augmented, Y_augmented))
+  
+  not_exclude <- !is.infinite(Y_augmented[,1])
+  
+  if(sum(!not_exclude) / length(not_exclude) > 0.1){
+    print("Warning: More than 10% of values are NA")
+  }
+  
+  X_augmented_run <- X_augmented[not_exclude, ]
+  Y_augmented_run <- Y_augmented[not_exclude, ]
+  
+  # tryCatch({
+  #   gp_res_parent_constant = py$fit_vanilla_2(X_augmented_run, Y_augmented_run, model = "conserved")
+  #   gp_res_parent_cis_static = py$fit_vanilla_2(X_augmented_run, Y_augmented_run, model = "cis_static")
+  #   gp_res_parent_cis_dynamic = py$fit_vanilla_2(X_augmented_run, Y_augmented_run, model = "cis_dynamic")
+  #   gp_res_parent_trans_static = py$fit_vanilla_2(X_augmented_run, Y_augmented_run, model = "trans_static")
+  #   gp_res_parent_trans_dynamic = py$fit_vanilla_2(X_augmented_run, Y_augmented_run, model = "trans_dynamic")
+  #   return(list(gp_res_parent_constant, gp_res_parent_cis_static, gp_res_parent_cis_dynamic, gp_res_parent_trans_static, 
+  #               gp_res_parent_trans_dynamic))
+  # }, error=function(cond) {
+  #     return(NA)
+  # })
+  tryCatch({
+    gp_res_parent_constant = py$fit_vanilla_one_sample(X_augmented_run, Y_augmented_run, model = "conserved")
+    gp_res_parent_cis_static = py$fit_vanilla_one_sample(X_augmented_run, Y_augmented_run, model = "cis_static")
+    gp_res_parent_cis_dynamic = py$fit_vanilla_one_sample(X_augmented_run, Y_augmented_run, model = "cis_dynamic")
+    return(list(gp_res_parent_constant, gp_res_parent_cis_static, gp_res_parent_cis_dynamic))
+  }, error=function(cond) {
+    return(NA)
+  })
+  # gp_res_parent_cis = py$fit_vanilla(X_augmented_run, Y_augmented_run, model = "cis")
+  # gp_res_parent_scaling = py$fit_vanilla(X_augmented_run, Y_augmented_run, model = "scaling")
+  # gp_res_parent_full = py$fit_vanilla(X_augmented_run, Y_augmented_run, model = "full")
+  # return(list(gp_res_parent_cis, gp_res_parent_scaling, gp_res_parent_full))
+  
+  # gp_res_parent_constant = py$fit_vanilla_4(X_augmented_run, Y_augmented_run, model = "conserved")
+  # gp_res_parent_cis_static = py$fit_vanilla_4(X_augmented_run, Y_augmented_run, model = "cis_static")
+  # gp_res_parent_cis_dynamic = py$fit_vanilla_4(X_augmented_run, Y_augmented_run, model = "cis_dynamic")
+  # gp_res_parent_trans_static = py$fit_vanilla_4(X_augmented_run, Y_augmented_run, model = "trans_static")
+  # gp_res_parent_trans_dynamic = py$fit_vanilla_4(X_augmented_run, Y_augmented_run, model = "trans_dynamic")
+  # return(list(gp_res_parent_constant, gp_res_parent_cis_static, gp_res_parent_cis_dynamic, gp_res_parent_trans_static, 
+  #             gp_res_parent_trans_dynamic))
+  
+}
+
+genes_test_here <- genes_use
+
+results_per_gene_expressed_intervals <- lapply(genes_test_here, function(x){
+  print(which(genes_use == x))
+  run_coreg_gp_python_expressed_intervals_new(x)
+})
+names(results_per_gene_expressed_intervals) <- genes_test_here
+
+saveRDS(results_per_gene_expressed_intervals, "./Data/processed/gp_fits_DE_new.rds")
+
+results_per_gene_expressed_intervals <- readRDS("~/Desktop/Projects/ASE_Spermatogenesis_Paper/Data/processed/gp_fits_DE_new.rds")
+# names(results_per_gene_expressed_intervals) <- genes_use
+results_per_gene_expressed_intervals <- results_per_gene_expressed_intervals[!unlist(lapply(results_per_gene_expressed_intervals, function(x){any(is.na(x))}))]
+
+likelihood_df <- data.frame(
+  likelihood_cons = unlist(lapply(results_per_gene_expressed_intervals, function(x){x[[1]][[3]]})),
+  likelihood_stat = unlist(lapply(results_per_gene_expressed_intervals, function(x){x[[2]][[3]]})),
+  likelihood_dyn = unlist(lapply(results_per_gene_expressed_intervals, function(x){x[[3]][[3]]}))
+)
+bf_dynamic_deg <- likelihood_df$likelihood_dyn - likelihood_df$likelihood_stat
+names(bf_dynamic_deg) <- names(results_per_gene_expressed_intervals)
+# 
+# plot_gp_results <- function(fit_data){
+#   df_cis_static_model <- data.frame(
+#   X = fit_data[[1]][[2]][[1]][[1]],
+#   Y = rev_logit(fit_data[[1]][[2]][[1]][[2]]),
+#   var = fit_data[[1]][[2]][[1]][[3]],
+#   effect = "constant"
+#   )
+#   df_cis_dynamic_model <- data.frame(
+#     X = fit_data[[2]][[2]][[1]][[1]],
+#     Y = rev_logit(fit_data[[2]][[2]][[1]][[2]]),
+#     var = fit_data[[2]][[2]][[1]][[3]],
+#     effect = "cis_static"
+#   )
+#   df_cis_dynamic_model <- data.frame(
+#     X = fit_data[[3]][[2]][[1]][[1]],
+#     Y = rev_logit(fit_data[[3]][[2]][[1]][[2]]),
+#     var = fit_data[[3]][[2]][[1]][[3]],
+#     effect = "cis_dynamic"
+#   )
+#   plot_df <- rbind(df_cis_static_model, df_cis_dynamic_model)
+#   ggplot(plot_df, aes(X, Y, col = effect)) + geom_line() + theme_classic() + ylim(c(0, 1))
+# }
+# 
+# rr <- run_coreg_gp_python_expressed_intervals_new("Rab23")
+# plot_gp_results(rr)
+# 
+# results_per_gene_expressed_intervals_test <- lapply(genes_use[genes_use %in% c("Mesp1", "Ddt")], function(x){
+#   print(which(genes_use == x))
+#   run_coreg_gp_python_expressed_intervals_new(x)
+# })
+
+```
