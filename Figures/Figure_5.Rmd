@@ -15,6 +15,16 @@ knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_knit$set(root.dir = "~/Desktop/Projects/ASE_Spermatogenesis_Paper_rerun//")
 ```
 
+## This script reproduces the plots shown in figure 5
+## Within-species allelic imbalance corresponds to between-species  transcriptional divergence
+
+# Analysis feeding into this figure:
+./Preprocessing_preprocessing_evo.R
+./Figure5_new_clusters_of_dyn_deg.R
+./Figure5_gp_fits_de_cast_new.R
+./Figure5_gp_fits_de_caroli_new.R
+./Figure5_new_figure_analysis.R
+
 ```{r sss}
 library(scran)
 library(scater)

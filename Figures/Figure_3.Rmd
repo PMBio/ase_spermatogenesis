@@ -15,6 +15,11 @@ knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_knit$set(root.dir = "~/Desktop/Projects/ASE_Spermatogenesis_Paper_rerun/")
 ```
 
+## This script reproduces the plots shown in figure 3
+## Differential allelic dynamics between parents and F1 offspring reveal context-specific  trans-effects in spermatogenesis
+
+# Analysis feeding into this figure:
+./Figure3_fit_trans_models.R
 
 ```{r ss}
 library(ggplot2)
@@ -33,13 +38,9 @@ theme_paper <- function(textsize = 20){
 }
 ```
 
-## This script reproduces Figure 3
-# Analysis feeding into this:
-./Analysis/Figure3_fit_trans_models.Rmd
+
 
 ```{r asdasdasda}
-#### features of genes with cis/trans effects
-
 genes_test <- readRDS("./Data/processed/genes_test.rds")
 gene_names <- rownames(genes_test)
 genes_test <- data.frame(apply(genes_test, 2, function(x){as.numeric(x)}))
@@ -72,7 +73,7 @@ full_expression <- readRDS("./Data/processed/sce_merged_new.rds")
 
 ```
 
-plot example gene for 3a
+For Figure 3a, plot an example gene to illustrate the analysis approach for dynamic trans effects
 
 ```{r asd1}
 
@@ -137,7 +138,7 @@ ggsave("./Plots/Figure3/Fig3_A.pdf", width = 10, height = 5)
 
 ```
 
-plot scatterplot of static vs dynamic
+Plot Bayes Factors as evidence for static and dynamic trans-effects
 
 ```{r sssss}
 
@@ -158,7 +159,7 @@ ggplot(genes_test, aes(BF_trans_static, BF_trans_dynamic, col = BF_trans > 10)) 
 ggsave("./Plots/Figure3/Fig3_C.pdf")
 ```
 
-plot of pastcons scores
+Compare the distribution of exonic phastcons scores between genes with and without static or dynamic trans-effects
 
 ```{r asd4}
 
@@ -170,12 +171,6 @@ intron_df_results <- setNames(features_prepared$VAR_evolution_phastcons_exon, ro
 five_utr_df_results <- setNames(features_prepared$VAR_evolution_phastcons_five_utr, rownames(features_prepared))
 three_utr_df_results <- setNames(features_prepared$VAR_evolution_phastcons_three_utr, rownames(features_prepared))
 promoter_df_results <- setNames(features_prepared$VAR_evolution_phastcons_promoter, rownames(features_prepared))
-
-# exon_df_results <- readRDS("./Data/processed/phastcons_scores.rds")
-# intron_df_results <- readRDS("./Data/processed/phastcons_scores.rds")
-# five_utr_df_results <- readRDS("./Data/processed/phastcons_scores.rds")
-# three_utr_df_results <- readRDS("./Data/processed/phastcons_scores.rds")
-# promoter_df_results <- readRDS("./Data/processed/phastcons_scores.rds")
 
 covariate <- ifelse(genes_test$BF_trans_static > 10, "static", "conserved")
 covariate[genes_test$BF_trans_dynamic > 10] <- "dynamic"
@@ -217,6 +212,7 @@ ggplot(plot_df, aes(x = Covariate, y = value)) +
 ggsave("./Plots/Figure3/Fig3_D.pdf", width = 6, height = 8)
 ```
 
+Now we compare the ratio of dynamic vs persistent genetic effects for cis and trans-effects
 
 ```{r asdassss}
 
@@ -266,8 +262,8 @@ ggplot(data_plot, aes(x = factor(Effect, levels = c("cis", "trans")),  fill = Ki
 ggsave("./Plots/Figure3/Fig3_E.pdf", width = 7, height = 10)
 ```
 
-for supplement: 
-correlation and calibration of BFs for cis-effects
+For the supplement
+Compare detected dynamic cis effects between the scDALI and the trans-GP model
 
 ```{r ssss}
 
@@ -293,13 +289,10 @@ ggsave("./Plots/FigureS3/FigS3_2.pdf")
 
 ```
 
-for supplement: 
-effect sizes vs bayes factors trans model
+Compare static and dynamic effect sizes (median and interquartile ranges) with Bayes Factors for static and dynamic effects
 
 ```{r ssss}
-
 # exclude 3 very high effect-size genes with no significant effect
-
 genes_test_here <- genes_test_here %>%
   dplyr::filter(abs(median_trans) < 0.3)
 
@@ -339,7 +332,7 @@ ggsave("./Plots/FigureS3/FigS3_3.pdf", pp)
 
 ```
 
-for supplement: more examples of trans-effects
+Plot a range of example genes with trans effects at different points in pseudotime
 
 ```{r ssss}
 
@@ -474,7 +467,7 @@ pheatmap(plot_heatmap, cluster_rows = F, cluster_cols = F, show_colnames = F,
 dev.off()
 ```
 
-Supplement: check total expression level vs detection
+Finally, compare the allelic expression levels of genes with their evidence for showing dynamic trans-effects, to rule out a strong bias by sequencing depth. 
 
 ```{r sss}
 

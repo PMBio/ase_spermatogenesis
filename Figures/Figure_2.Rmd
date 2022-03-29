@@ -101,6 +101,8 @@ plot_gene_GP(data_total_expression, gene, gp_results_total[gene][[1]], remove_ze
 ggsave("./Plots/Figure2/Fig2_A.pdf", width = 10, height = 7)
 ```
 
+We now plot a sketch of the cells across pseudotime
+
 ```{r sss}
 # First, we visualize cell types across the pseudotemporal axis
 data_total_expression_here <- data_total_expression
@@ -119,7 +121,7 @@ data.frame(
         axis.text.y = element_blank()) + 
   ylab("") + xlab("")
 
-ggsave("./Plots/Figure2/Fig2_A_celdensity.pdf", width = 10, height = 2)
+ggsave("./Plots/Figure2/Fig2_A_celldensity.pdf", width = 10, height = 2)
 
 # now, we partition the pseudotime into intervals of constant length
 df_here <- data.frame(
@@ -571,16 +573,10 @@ genes_test$BF_cis_static <- genes_test$NLL_null - genes_test$NLL_alt
 genes_test[genes_test$NLL_null < 0 | genes_test$NLL_alt < 0, ]$BF_cis_static <- 0
 genes_test[genes_test$BF_cis_static < 0, ]$BF_cis_static <- 0
 
-#BF_cutoff <- 10
-#BF_cutoff_lower <- 2
 pval_cutoff <- 2
 pval_cutoff_lower <- 1
-# genes_cis_static <- rownames(genes_test[genes_test$BF_cis_static > 7, ])
-# genes_cis_dynamic <- rownames(genes_test[genes_test$BF_cis_dynamic > 7, ])
 genes_cis_static <- rownames(genes_test[-log10(p.adjust(genes_test$pval)) > pval_cutoff & -log10(p.adjust(genes_test$dali_pval_polynomial)) < pval_cutoff_lower, ])
 genes_cis_dynamic <- rownames(genes_test[-log10(p.adjust(genes_test$dali_pval_polynomial)) > pval_cutoff, ])
-#genes_cis_static <- rownames(genes_test[-log10(p.adjust(genes_test$pval)) > 2, ])
-#genes_cis_dynamic <- rownames(genes_test[-log10(p.adjust(genes_test$dali_pval_polynomial)) > 2, ])
 
 genes_cis <- union(genes_cis_static, genes_cis_dynamic)
 
@@ -727,13 +723,6 @@ plot_df_2 <- importance_df_cis_dynamic %>%
 features_show <- setNames(importance_df_cis$MeanDecreaseAccuracy + importance_df_cis_dynamic[rownames(importance_df_cis), ]$MeanDecreaseAccuracy, 
                           rownames(importance_df_cis))
 features_show <- names(sort(features_show, decreasing = T)[1:12])
-
-# convert_names <- setNames(c("Exp. Level", "PhastCons (exon)", "PhyloP (exon)", "%SNP (exon)", "3' UTR length", "%SNP 3' UTR", "#Exons", 
-#                             "Exp. Variability (inter-celltype)", "Exp. Variability (intra-celltype)", "5' UTR length", "%SNP (5' UTR)", "Gene Length"), 
-#                           c("VAR_expression_level", "VAR_evolution_phastcons_exon", "VAR_evolution_phylop_exon", "VAR_evolution_snpdensity_F1_exon", 
-#                             "VAR_structural_threeUTRlength", "VAR_evolution_snpdensity_F1_threeUTR", "VAR_structural_exon_number",
-#                             "VAR_expression_variability_pre_celltype", "VAR_expression_variability_post_celltype", "VAR_structural_fiveUTRlength", 
-#                             "VAR_evolution_snpdensity_F1_fiveUTR", "VAR_structural_gene_length"))
 
 convert_names <- c(
   "VAR_evolution_phylop_intron" = "PhyloP (intron)", 

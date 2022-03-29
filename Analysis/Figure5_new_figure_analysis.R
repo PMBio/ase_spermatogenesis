@@ -6,11 +6,10 @@ theme_paper <- function(textsize = 20){
         panel.border = element_rect(colour = "black", fill=NA, size=1), 
         text = element_text(size = textsize))
 }
-setwd("~/Desktop/Projects/ASE_Spermatogenesis_Paper/")
+setwd("~/Desktop/Projects/ASE_Spermatogenesis_Paper_rerun/")
 
-results_per_gene_expressed_intervals_cast <- readRDS("~/Desktop/Projects/ASE_Spermatogenesis_Paper/Data/processed/gp_fits_DE_cast_new.rds")
+results_per_gene_expressed_intervals_cast <- readRDS("./Data/processed/gp_fits_DE_cast_new.rds")
 results_per_gene_expressed_intervals <- results_per_gene_expressed_intervals_cast
-# names(results_per_gene_expressed_intervals) <- genes_use
 results_per_gene_expressed_intervals <- results_per_gene_expressed_intervals[!unlist(lapply(results_per_gene_expressed_intervals, function(x){any(is.na(x))}))]
 
 likelihood_df <- data.frame(
@@ -21,9 +20,8 @@ likelihood_df <- data.frame(
 bf_dynamic_deg_cast <- likelihood_df$likelihood_dyn - likelihood_df$likelihood_stat
 names(bf_dynamic_deg_cast) <- names(results_per_gene_expressed_intervals)
 
-results_per_gene_expressed_intervals_caroli <- readRDS("~/Desktop/Projects/ASE_Spermatogenesis_Paper/Data/processed/gp_fits_DE_caroli_new.rds")
+results_per_gene_expressed_intervals_caroli <- readRDS("./Data/processed/gp_fits_DE_caroli_new.rds")
 results_per_gene_expressed_intervals <- results_per_gene_expressed_intervals_caroli
-# names(results_per_gene_expressed_intervals) <- genes_use
 results_per_gene_expressed_intervals <- results_per_gene_expressed_intervals[!unlist(lapply(results_per_gene_expressed_intervals, function(x){any(is.na(x))}))]
 
 likelihood_df <- data.frame(
@@ -54,7 +52,7 @@ cor(bf_dynamic_deg_cast, rank(bf_dynamic_deg_caroli[names(bf_dynamic_deg_cast)])
 
 # joint clustering approach here as well
 
-data <- readRDS("~/Desktop/Projects/ASE_Spermatogenesis_Paper/Data/processed/data_evo_for_fitting.rds")
+data <- readRDS("./Data/processed/data_evo_for_fitting.rds")
 
 genes_test <- rownames(data[[1]])
 genes_test <- genes_test[!genes_test %in% c("Krt82", "Uroc1", "Rax")]
@@ -119,7 +117,6 @@ rownames(combined_input) <- c(cast_names, caroli_names)
 set.seed(123)
 n_clusters <- 7
 clusters <- cutree(hclust(dist(combined_input), method = "complete"), k = n_clusters)
-# which(apply(combined_input, 1, function(x){any(is.na(x))}))
 
 trace_results <- lapply(1:7, function(i){
   dds = combined_input[clusters == i, ]
@@ -163,7 +160,7 @@ ggplot() +
   ggtitle("Differential Expression (F0, CAST)") +
   theme(axis.line = element_line(colour = "black"),
         panel.border = element_rect(colour = "black", fill=NA, size=1))
-ggsave("~/Desktop/PaperWriting/Fig5_new/CAST_trace_plot.pdf", width = 16, height = 5)
+ggsave("./Plots/Figure5/CAST_trace_plot.pdf", width = 16, height = 5)
 
 data.frame(
   Cluster = factor(paste0("Cluster_", unique(clusters)), levels = paste0("Cluster_", c(1, 3, 4, 5, 2, 6, 7))),
@@ -173,7 +170,7 @@ data.frame(
   coord_polar("y", start=0) + 
   scale_fill_manual(values = cluster_colors) + 
   theme_void()
-ggsave("~/Desktop/PaperWriting/Fig5_new/CAST_venn.pdf",  width = 20, height = 20)
+ggsave("./Plots/Figure5/CAST_venn.pdf",  width = 20, height = 20)
 
 # for caroli
 trace_results %>% 
@@ -192,7 +189,7 @@ ggplot() +
   ggtitle("Differential Expression (F0, CAROLI)") +
   theme(axis.line = element_line(colour = "black"),
         panel.border = element_rect(colour = "black", fill=NA, size=1))
-ggsave("~/Desktop/PaperWriting/Fig5_new/CAROLI_trace_plot.pdf", width = 16, height = 5)
+ggsave("./Plots/Figure5/CAROLI_trace_plot.pdf", width = 16, height = 5)
 
 data.frame(
   Cluster = factor(paste0("Cluster_", unique(clusters)), levels = paste0("Cluster_", c(1, 3, 4, 5, 2, 6, 7))),
@@ -202,7 +199,7 @@ data.frame(
   coord_polar("y", start=0) + 
   scale_fill_manual(values = cluster_colors) + 
   theme_void()
-ggsave("~/Desktop/PaperWriting/Fig5_new/CAROLI_venn.pdf", width = 20, height = 20)
+ggsave("./Plots/Figure5/CAROLI_venn.pdf", width = 20, height = 20)
 
 total_effect_sizes_unscaled <- data.frame(
   "Bins" = 1:91,
@@ -221,7 +218,7 @@ ggplot(total_effect_sizes_unscaled[total_effect_sizes_unscaled$name == "deg", ],
   ylab("") + xlab("") +
   theme(axis.line = element_line(colour = "black"),
         panel.border = element_rect(colour = "black", fill=NA, size=1))
-ggsave("~/Desktop/PaperWriting/Fig5/F5_clustering_CAST_unscaled.pdf",  width = 16, height = 2.5)
+ggsave("./Plots/Figure5/F5_clustering_CAST_unscaled.pdf",  width = 16, height = 2.5)
 
 total_effect_sizes_unscaled <- data.frame(
   "Bins" = 1:91,
@@ -240,5 +237,5 @@ ggplot(total_effect_sizes_unscaled[total_effect_sizes_unscaled$name == "deg", ],
   ylab("") + xlab("") +
   theme(axis.line = element_line(colour = "black"),
         panel.border = element_rect(colour = "black", fill=NA, size=1))
-ggsave("~/Desktop/PaperWriting/Fig5/F5_clustering_CAROLI_unscaled.pdf",  width = 16, height = 2.5)
+ggsave("./Plots/Figure5/F5_clustering_CAROLI_unscaled.pdf",  width = 16, height = 2.5)
 

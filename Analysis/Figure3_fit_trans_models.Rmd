@@ -28,7 +28,6 @@ rev_logit <- function(x){
 }
 
 library(reticulate)
-#use_python("/Users/jasper/Library/r-miniconda/bin/python", required = T)
 dali_path = "~/Desktop/PhD/Projects/ASE_Spermatogenesis/Scripts/dali/"
 
 ## ---------------------- R functions ---------------------- 
@@ -180,8 +179,6 @@ data_use <- readRDS("./Data/processed/sce_merged_new.rds")
 data_use <- data_use[,data_use$CellType %in% c("SG", "SC", "RS", "ES")]
 data_use <- annotate_chromosome_sce(data_use)
 
-# data_use_here <- data_use[,data_use$Species == "B6"]
-
 make_pseudotime_smooth <- function(data, pt, n_partitions = 100){
   pseudotime_here <- pt
   pseudotime_here <- pseudotime_here - min(pseudotime_here)
@@ -207,9 +204,6 @@ pseudotime_here <- pseudotime_here - min(pseudotime_here)
 pseudotime_here <- pseudotime_here / max(pseudotime_here) # between 0 and 1
 intervals <- c(0, 1:n_partitions / n_partitions)
 
-#data_use_here <- data_use[, pseudotime_here < 0.98]
-#pseudotime_here <- pseudotime_here[pseudotime_here < 0.98]
-
 data_f0_b6 <- make_pseudotime_smooth(counts_reference(data_use[,data_use$Species == "B6"]),
                                      pseudotime_here[data_use$Species == "B6"], n_partitions = 100)
 
@@ -231,8 +225,6 @@ data_f0_cast <- list_data[[2]]
 data_f1_b6 <- list_data[[3]]
 data_f1_cast <- list_data[[4]]
 
-# compute trans effects as r_F0 - r_F1, stabilize rate estimates with pseudocounts
-
 # Normalize f0 data
 genes_use <- rownames(genes_test)
 chromosome_genes_use <- as.character(rowData(data_use[rownames(genes_test), ])$chromosome_name)
@@ -249,13 +241,6 @@ rs_f1 <- (data_f1_b6[genes_use, ] + 1) / (data_f1_b6[genes_use, ] + data_f1_cast
 
 testytesty_genes <- rownames(genes_test[genes_test$dali_pval_polynomial < 0.1, ])
 testytesty_genes <- intersect(testytesty_genes, rownames(rs_f1))
-
-# rs_difference <- rs_f0 - rs_f1
-
-# cis_effect <- apply(rs_f1, 1, mean)
-# mean_difference <- apply(rs_difference, 1, mean)
-# median_difference <- apply(rs_difference, 1, median)
-# quantile_difference <- apply(rs_difference, 1, function(x){quantile(x, 0.8) - quantile(x, 0.2)})
 
 ```
 
@@ -305,14 +290,14 @@ def fit_vanilla_4(X, Y, model = "trans_dynamic",  n_iterations = 100):
   if ((model == "trans_static") | (model == "trans_dynamic")):
     mean_function = SwitchedMeanFunction([Constant(), Constant()])
   m = gpflow.models.VGP((X, Y), kernel=kern, likelihood = lik, mean_function = mean_function)
-  # if not full model, fix kernel to be 1 x K
+  #
   if ((model == "conserved") | (model == "cis_static") | (model == "cis_dynamic") | ( model == "trans_static")):
     m.kernel.kernels[1].W.assign(np.array([[1], [1]]))
     m.kernel.kernels[1].kappa.assign(np.array([0.000001, 0.000001]))
     set_trainable(m.kernel.kernels[1].kappa, False)
     set_trainable(m.kernel.kernels[1].W, False)
-  #m = gpflow.models.SVGP((X, Y), kernel=kern, likelihood = lik, inducing_points = iv_list)
-  #m = gpflow.models.GPR((X, Y), kernel=kern)
+  #
+  #
   if (model == "conserved"):
     m.mean_function.c.assign([0.5])
     set_trainable(m.mean_function.c, False)
@@ -322,18 +307,6 @@ def fit_vanilla_4(X, Y, model = "trans_dynamic",  n_iterations = 100):
   )
   predictions = plot(m)
   covariance = m.kernel.kernels[1].output_covariance().numpy()
-  #likelihood = np.sum(m.predict_log_density((X, Y)).numpy())
-  # compute the likelihood of the data under the given model
-  # if (model == "conserved"):
-  #   mean_fit, cov_fit = m.predict_f(m.data[0], full_cov = True)
-  #   print("test")
-  #   mean_fit = tf.convert_to_tensor(np.atleast_2d(np.array([0.5 for i in range(len(mean_fit))])).transpose())
-  #   cov_fit_chol = tf.linalg.cholesky(tf.reshape(cov_fit, [len(mean_fit), len(mean_fit)]) + np.eye(len(mean_fit)) * 10e-6)
-  #   likelihood = gpflow.logdensities.multivariate_normal(m.data[1], mean_fit, cov_fit_chol).numpy()
-  # else:
-  #   mean_fit, cov_fit = m.predict_f(m.data[0], full_cov = True)
-  #   cov_fit_chol = tf.linalg.cholesky(tf.reshape(cov_fit, [len(mean_fit), len(mean_fit)]) + np.eye(len(mean_fit)) * 10e-6)
-  #   likelihood = gpflow.logdensities.multivariate_normal(m.data[1], mean_fit, cov_fit_chol).numpy()
   likelihood = m.maximum_log_likelihood_objective().numpy()
   return([m, predictions, covariance, likelihood])
 
@@ -345,105 +318,11 @@ total_exp <- data_f0_b6 + data_f0_cast + data_f1_b6 + data_f1_cast
 total_exp <- total_exp[genes_use,]
 
 saveRDS(total_exp, "./Data/processed/total_exp.rds")
-
 total_exp <- readRDS("./Data/processed/total_exp.rds")
 
 rs_f0_noStab <- (data_f0_b6_norm[genes_use, ]) / (data_f0_b6_norm[genes_use, ] + data_f0_cast_norm[genes_use, ])
 rs_f1_noStab <- (data_f1_b6[genes_use, ]) / (data_f1_b6[genes_use, ] + data_f1_cast[genes_use, ])
 
-# test_read <- readRDS("~/Desktop/Projects/ASE_Spermatogenesis_Paper/Data/processed/trans_effects_expressed_intervals_new.rds")
-
-# run_coreg_gp_python <- function(gene, model = "full"){
-#   
-#   data_plot_ratio <- data.frame(
-#     FC_F0 = rs_f0[gene, ],
-#     FC_F1 = rs_f1[gene, ],
-#     Interval = 1:ncol(rs_f0)
-#   )
-#   
-#   x_test <- as.double(data_plot_ratio$Interval)
-#   
-#   y1_test <- logit(data_plot_ratio$FC_F0)
-#   y2_test <- logit(data_plot_ratio$FC_F1)
-#   
-#   X_augmented = as.matrix(data.frame(c(x_test, x_test), c(rep(0, length(x_test)), rep(1, length(x_test)))))
-#   Y_augmented = as.matrix(data.frame(c(y1_test, y2_test), c(rep(0, length(x_test)), rep(1, length(x_test)))))
-#   
-#   not_exclude <- !is.infinite(Y_augmented[,1])
-#   
-#   if(sum(!not_exclude) / length(not_exclude) > 0.1){
-#     print("Warning: More than 10% of values are NA")
-#   }
-#   
-#   X_augmented_run <- X_augmented[not_exclude, ]
-#   Y_augmented_run <- Y_augmented[not_exclude, ]
-#   # tryCatch({
-#   #     gp_res_parent_cis = py$fit_vanilla(X_augmented_run, Y_augmented_run, model = "cis")
-#   #     gp_res_parent_scaling = py$fit_vanilla(X_augmented_run, Y_augmented_run, model = "scaling")
-#   #     gp_res_parent_full = py$fit_vanilla(X_augmented_run, Y_augmented_run, model = "full")
-#   #     return(list(gp_res_parent_cis, gp_res_parent_scaling, gp_res_parent_full))
-#   # }, error=function(cond) {
-#   #     return(NA)
-#   # })
-#   
-#   # gp_res_parent_cis = py$fit_vanilla(X_augmented_run, Y_augmented_run, model = "cis")
-#   # gp_res_parent_scaling = py$fit_vanilla(X_augmented_run, Y_augmented_run, model = "scaling")
-#   # gp_res_parent_full = py$fit_vanilla(X_augmented_run, Y_augmented_run, model = "full")
-#   # return(list(gp_res_parent_cis, gp_res_parent_scaling, gp_res_parent_full))
-#   
-#   gp_res_parent_cis = py$fit_vanilla_2(X_augmented_run, Y_augmented_run, model = "cis")
-#   gp_res_parent_constant = py$fit_vanilla_2(X_augmented_run, Y_augmented_run, model = "trans_constant")
-#   gp_res_parent_scaling = py$fit_vanilla_2(X_augmented_run, Y_augmented_run, model = "trans_scaling")
-#   gp_res_parent_complex = py$fit_vanilla_2(X_augmented_run, Y_augmented_run, model = "trans_complex")
-#   return(list(gp_res_parent_cis, gp_res_parent_constant, gp_res_parent_scaling, gp_res_parent_complex))
-#   
-# }
-# 
-# run_coreg_gp_python_expressed_intervals <- function(gene, model = "full"){
-#   
-#   data_plot_ratio <- data.frame(
-#     FC_F0 = rs_f0_noStab[gene, ],
-#     FC_F1 = rs_f1_noStab[gene, ],
-#     Interval = 1:ncol(rs_f0)
-#   )
-#   
-#   intervals_test <- total_exp[gene, ] > 0.5
-#   
-#   if (sum(intervals_test) < 5){
-#     print("Not enough intervals to test")
-#     return(list(NA, NA, NA, NA))
-#   }
-#   
-#   data_plot_ratio <- data_plot_ratio[intervals_test, ]
-#   
-#   x_test <- as.double(data_plot_ratio$Interval)
-#   
-#   y1_test <- logit(data_plot_ratio$FC_F0)
-#   y2_test <- logit(data_plot_ratio$FC_F1)
-#   
-#   X_augmented = as.matrix(data.frame(c(x_test, x_test), c(rep(0, length(x_test)), rep(1, length(x_test)))))
-#   Y_augmented = as.matrix(data.frame(c(y1_test, y2_test), c(rep(0, length(x_test)), rep(1, length(x_test)))))
-#   
-#   not_exclude <- !is.infinite(Y_augmented[,1])
-#   
-#   if(sum(!not_exclude) / length(not_exclude) > 0.1){
-#     print("Warning: More than 10% of values are NA")
-#   }
-#   
-#   X_augmented_run <- X_augmented[not_exclude, ]
-#   Y_augmented_run <- Y_augmented[not_exclude, ]
-#   
-#   tryCatch({
-#     gp_res_parent_cis = py$fit_vanilla_2(X_augmented_run, Y_augmented_run, model = "cis")
-#     gp_res_parent_constant = py$fit_vanilla_2(X_augmented_run, Y_augmented_run, model = "trans_constant")
-#     gp_res_parent_scaling = py$fit_vanilla_2(X_augmented_run, Y_augmented_run, model = "trans_scaling")
-#     gp_res_parent_complex = py$fit_vanilla_2(X_augmented_run, Y_augmented_run, model = "trans_complex")
-#     return(list(gp_res_parent_cis, gp_res_parent_constant, gp_res_parent_scaling, gp_res_parent_complex))
-#   }, error=function(cond) {
-#     return(NA)
-#   })
-#   
-# }
 
 run_coreg_gp_python_expressed_intervals_new <- function(gene, model = "full"){
   
@@ -510,9 +389,6 @@ plot_model <- function(model_fits, which_model = "cis_dynamic"){
   print(head(data_plot_means))
   ggplot() + geom_line(data = data_plot_means, aes(X, Y_F0), col = "red") + geom_line(data = data_plot_means, aes(X, Y_F1), col = "blue")
 }
-
-testy <- run_coreg_gp_python_expressed_intervals_new("Mesp1")
-plot_model(testy, "trans_static")
 
 results_per_gene_expressed_intervals <- lapply(genes_use, function(x){
   print(x)

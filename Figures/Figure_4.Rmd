@@ -15,16 +15,15 @@ knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_knit$set(root.dir = "~/Desktop/Projects/ASE_Spermatogenesis_Paper_rerun//")
 ```
 
-```{r code}
+## This script reproduces the plots shown in figure 4
+## Dynamic expression divergence between mouse sub-species is predominantly caused by differentiation-dependent cis-effects
 
+# Analysis feeding into this figure:
+./Figure4_gp_fits_de.R
+
+```{r code}
 source("./Scripts/General/auxiliary.R")
 source("./Scripts/General/reuse_functions.R")
-
-# clustering analysis figure4
-# Show dynamics of Expression, DE (ASE F0), cis (ASE F1) and trans (ASE F0 - F1) over time as clusters
-# Show that main mode or variation is increase in DE, cis and trans late in differentiation
-
-## Figure A & B
 
 library(ggplot2)
 library(pheatmap)
@@ -45,7 +44,6 @@ genes_test <- genes_test[!is.na(genes_test$BF_trans_static), ]
 genes_test <- genes_test[!is.na(genes_test$BF_trans_dynamic), ]
 
 # add static cis BF as NLL_null - NLL_alt from dali LLR test
-# there are some issues here with negative NLLs resulting from model misspecification, should be fixed in the new model
 genes_test$BF_cis_static <- genes_test$NLL_null - genes_test$NLL_alt
 genes_test[genes_test$NLL_null < 0 | genes_test$NLL_alt < 0, ]$BF_cis_static <- 0
 genes_test[genes_test$BF_cis_static < 0, ]$BF_cis_static <- 0
@@ -175,8 +173,6 @@ genes_cis_dynamic <- rownames(genes_test[genes_test$BF_cis_dynamic > 10, ])
 genes_trans_static <- rownames(genes_test[genes_test$BF_trans_static > 10 & genes_test$BF_trans_dynamic < 10, ])
 genes_trans_dynamic <- rownames(genes_test[genes_test$BF_trans_dynamic > 10, ])
 
-# 
-
 data_use <- readRDS("./Data/processed/sce_merged_new.rds")
 total_exp <- readRDS("./Data/processed/total_exp.rds")
 
@@ -206,23 +202,24 @@ make_pseudotime_smooth <- function(data, pt, n_partitions = 100){
   expression_smoothed
 }
 
-# data_f0_b6_rep1 <- make_pseudotime_smooth(counts_reference(data_use[,data_use$Library == "Sample1"]),
-#                                           pseudotime_here[data_use$Library == "Sample1"], n_partitions = 100)
-# data_f0_b6_rep2 <- make_pseudotime_smooth(counts_reference(data_use[,data_use$Library == "Sample2"]),
-#                                           pseudotime_here[data_use$Library == "Sample2"], n_partitions = 100)
-# data_f0_cast_rep1 <- make_pseudotime_smooth(counts_alternative(data_use[,data_use$Library == "Sample3"]),
-#                                             pseudotime_here[data_use$Library == "Sample3"], n_partitions = 100)
-# data_f0_cast_rep2 <- make_pseudotime_smooth(counts_alternative(data_use[,data_use$Library == "Sample4"]),
-#                                             pseudotime_here[data_use$Library == "Sample4"], n_partitions = 100)
-# data_f1_b6_rep1 <- make_pseudotime_smooth(counts_reference(data_use[,data_use$Library == "Sample5"]),
-#                                           pseudotime_here[data_use$Library == "Sample5"], n_partitions = 100)
-# data_f1_b6_rep2 <- make_pseudotime_smooth(counts_reference(data_use[,data_use$Library == "Sample6"]),
-#                                           pseudotime_here[data_use$Library == "Sample6"], n_partitions = 100)
-# data_f1_cast_rep1 <- make_pseudotime_smooth(counts_alternative(data_use[,data_use$Library == "Sample5"]),
-#                                             pseudotime_here[data_use$Library == "Sample5"], n_partitions = 100)
-# data_f1_cast_rep2 <- make_pseudotime_smooth(counts_alternative(data_use[,data_use$Library == "Sample6"]),
-#                                             pseudotime_here[data_use$Library == "Sample6"], n_partitions = 100)
+data_f0_b6_rep1 <- make_pseudotime_smooth(counts_reference(data_use[,data_use$Library == "Sample1"]),
+                                          pseudotime_here[data_use$Library == "Sample1"], n_partitions = 100)
+data_f0_b6_rep2 <- make_pseudotime_smooth(counts_reference(data_use[,data_use$Library == "Sample2"]),
+                                          pseudotime_here[data_use$Library == "Sample2"], n_partitions = 100)
+data_f0_cast_rep1 <- make_pseudotime_smooth(counts_alternative(data_use[,data_use$Library == "Sample3"]),
+                                            pseudotime_here[data_use$Library == "Sample3"], n_partitions = 100)
+data_f0_cast_rep2 <- make_pseudotime_smooth(counts_alternative(data_use[,data_use$Library == "Sample4"]),
+                                            pseudotime_here[data_use$Library == "Sample4"], n_partitions = 100)
+data_f1_b6_rep1 <- make_pseudotime_smooth(counts_reference(data_use[,data_use$Library == "Sample5"]),
+                                          pseudotime_here[data_use$Library == "Sample5"], n_partitions = 100)
+data_f1_b6_rep2 <- make_pseudotime_smooth(counts_reference(data_use[,data_use$Library == "Sample6"]),
+                                          pseudotime_here[data_use$Library == "Sample6"], n_partitions = 100)
+data_f1_cast_rep1 <- make_pseudotime_smooth(counts_alternative(data_use[,data_use$Library == "Sample5"]),
+                                            pseudotime_here[data_use$Library == "Sample5"], n_partitions = 100)
+data_f1_cast_rep2 <- make_pseudotime_smooth(counts_alternative(data_use[,data_use$Library == "Sample6"]),
+                                            pseudotime_here[data_use$Library == "Sample6"], n_partitions = 100)
 
+saveRDS("./Data/processed/binned_data.rds")
 list_data <- readRDS("./Data/processed/binned_data.rds")
 
 data_f0_b6 <- list_data[[1]]
@@ -245,7 +242,6 @@ total_expression <- data_f0_b6 + data_f0_cast + data_f1_b6 + data_f1_cast
 
 # collect genetic effects
 results_per_gene_expressed_intervals <- readRDS("./Data/processed/gp_fits_DE_new.rds")
-# names(results_per_gene_expressed_intervals) <- genes_use
 results_per_gene_expressed_intervals <- results_per_gene_expressed_intervals[!unlist(lapply(results_per_gene_expressed_intervals, function(x){any(is.na(x))}))]
 
 likelihood_df <- data.frame(
@@ -340,7 +336,6 @@ data.frame(table(all_genetic_effects[all_genetic_effects$deg, ][,c("cis", "trans
 ggsave("./Plots/Figure4/F4_clustering_barplot_cis_trans.pdf")
 
 # total unscaled plots 
-
 total_expression_unscaled_here <- total_expression_unscaled
 deg_effects_unscaled_here <- as.matrix(deg_effects_unscaled[intersect(rownames(total_expression_unscaled), rownames(deg_effects_unscaled)), ])
 cis_effects_unscaled_here <- as.matrix(cis_effects_unscaled[intersect(rownames(total_expression_unscaled), rownames(cis_effects_unscaled)), ])

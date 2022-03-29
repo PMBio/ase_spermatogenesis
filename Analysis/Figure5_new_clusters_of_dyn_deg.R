@@ -1,4 +1,4 @@
-setwd("~/Desktop/Projects/ASE_Spermatogenesis_Paper/")
+setwd("~/Desktop/Projects/ASE_Spermatogenesis_Paper_rerun/")
 
 library(scran)
 library(scater)
@@ -7,9 +7,9 @@ library(pheatmap)
 library(zoo)
 library(tidyverse)
 source("./Scripts/General/auxiliary.R")
-source("./Scripts/General//reuse_functions.R")
+source("./Scripts/General/reuse_functions.R")
 
-data_evo <- readRDS("./data/processed/final_sce_evo_dataset.rds")
+data_evo <- readRDS("./Data/processed/final_sce_evo_dataset.rds")
 colnames(data_evo) <- paste0(data_evo$Library, "_", data_evo$Barcode)
 corrected_data <- metadata(data_evo)$corrected
 rownames(corrected_data) <- colnames(data_evo)
@@ -18,7 +18,7 @@ corrected_data <- corrected_data[colnames(data_evo), ]
 dim(corrected_data)
 
 # load other dataset for reference 
-data_ref <- readRDS("~/Desktop/Projects/ASE_Spermatogenesis_Paper/Data/processed/data_with_pseudotime.rds")
+data_ref <- readRDS("./Data/processed/sce_merged_new.rds")
 data_ref <- logNormCounts(data_ref)
 data_ref <- data_ref[,!data_ref$CellType %in% c("Immune", "Leydig", "Sertoli")]
 
@@ -143,7 +143,7 @@ data_f0_cast <- data_f0_cast[genes_test, ]
 data_f0_caroli <- data_f0_caroli[genes_test, ]
 
 # save for fitting 
-saveRDS(list(data_f0_b6, data_f0_cast, data_f0_caroli), file = "~/Desktop/Projects/ASE_Spermatogenesis_Paper/Data/processed/data_evo_for_fitting.rds")
+saveRDS(list(data_f0_b6, data_f0_cast, data_f0_caroli), file = ".//Data/processed/data_evo_for_fitting.rds")
 
 
 

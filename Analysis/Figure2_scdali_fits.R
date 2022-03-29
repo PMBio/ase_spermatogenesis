@@ -274,8 +274,8 @@ D <- t(counts_reference(data_f1[rownames(genes.test),]) +
        counts_alternative(data_f1[rownames(genes.test),]))
 pseudotime <- data_f1$Pseudotime
 
-#results_linear_kernel <- test_regions_R(A, D, pseudotime, n_cores = 4L)
-#saveRDS(results_linear_kernel, "./Data/processed/Dali_scoreTest_linear.csv")
+results_linear_kernel <- test_regions_R(A, D, pseudotime, n_cores = 4L)
+saveRDS(results_linear_kernel, "./Data/processed/Dali_scoreTest_linear.csv")
 results_linear_kernel <- readRDS("./Data/processed/Dali_scoreTest_linear.csv")
 
 genes.test$dali_pval_linear <- results_linear_kernel
@@ -294,9 +294,9 @@ make_onehot_cluster <- function(clusters){
 
 cluster_kernel <- make_onehot_cluster(data_f1$CellType)
 
-#results_cluster_kernel <- test_regions_R(A, D, cluster_kernel, n_cores = 4L)
-#names(results_cluster_kernel) <- rownames(genes.test)
-#saveRDS(results_cluster_kernel, "./Data/processed/Dali_scoreTest_discrete.csv")
+results_cluster_kernel <- test_regions_R(A, D, cluster_kernel, n_cores = 4L)
+names(results_cluster_kernel) <- rownames(genes.test)
+saveRDS(results_cluster_kernel, "./Data/processed/Dali_scoreTest_discrete.csv")
 
 make_polynomial_kernel <- function(cell_state, degree = 1){
   cell_state = cell_state / max(cell_state)
@@ -307,47 +307,15 @@ make_polynomial_kernel <- function(cell_state, degree = 1){
 
 pseudotime_polynomial <- make_polynomial_kernel(pseudotime, degree = 3)
 
-# results_polynomial_kernel <- test_regions_R(A, D, pseudotime_polynomial)
-# saveRDS(results_polynomial_kernel, "./Data/processed/Dali_scoreTest_poly.csv")
-# names(results_polynomial_kernel) <- colnames(A)
+results_polynomial_kernel <- test_regions_R(A, D, pseudotime_polynomial)
+saveRDS(results_polynomial_kernel, "./Data/processed/Dali_scoreTest_poly.csv")
+names(results_polynomial_kernel) <- colnames(A)
 
 results_polynomial_kernel <- readRDS("./Data/processed/Dali_scoreTest_poly.csv")
 results_polynomial_kernel[is.na(results_polynomial_kernel)] <- 1
 genes.test$dali_pval_polynomial <- results_polynomial_kernel
 
 saveRDS(genes.test, "./Data/processed/Dali_full_results.rds")
-
-# check reproducibility across libraries:
-# indices_lib1 <- grepl("Sample5", rownames(A))
-# indices_lib2 <- grepl("Sample6", rownames(A))
-# 
-# n_genes <- 1000
-# 
-# results_polynomial_kernel_total <- test_regions_R(A[, 1:n_genes], D[, 1:n_genes], pseudotime_polynomial)
-# results_polynomial_kernel_lib1 <- test_regions_R(A[indices_lib1, 1:n_genes], D[indices_lib1, 1:n_genes], pseudotime_polynomial[indices_lib1, ])
-# results_polynomial_kernel_lib2 <- test_regions_R(A[indices_lib2, 1:n_genes], D[indices_lib2, 1:n_genes], pseudotime_polynomial[indices_lib2, ])
-# 
-# all_data <- data.frame(
-#   "ResTotal" = results_polynomial_kernel_total, 
-#   "ResLib1" = results_polynomial_kernel_lib1, 
-#   "ResLib2" = results_polynomial_kernel_lib2
-# )
-# 
-# ggplot(all_data, aes(-log10(ResLib1), -log10(ResLib2))) + geom_point() + scale_x_sqrt() + scale_y_sqrt() + ggtitle("Pvalue reproducibility scDALI")
-# table(p.adjust(all_data$ResLib1) < 0.01, p.adjust(all_data$ResLib2) < 0.01)
-# 
-# # same with downsampling
-# n_cells <- c(1000, 2000, 3000, 4000, 5000, 7000)
-# 
-# downsampling_results <- lapply(n_cells, function(i){
-#   test_regions_R(A[1:i, 1:n_genes], D[1:i, 1:n_genes], pseudotime_polynomial[1:i, ])
-# })
-# 
-# results.matrix <- do.call("cbind", downsampling_results)
-# 
-# discoveries <- unlist(lapply(downsampling_results, function(x){sum(p.adjust(x) < 0.1, na.rm = T)}))
-# 
-# ggplot(data.frame(x = 1:length(discoveries), y = discoveries), aes(x = x, y = y)) + geom_point() + geom_line()
 
 ### ------ downstream analysis --------------------------
 ### calculate smoothed profiles for each significant gene
@@ -359,31 +327,7 @@ D_here <- D[, genes_sig]
 
 pseudotime_poly <- make_polynomial_kernel(data_f1$Pseudotime, degree = 3)
 
-# gp_mesp1_linear <- run_gp_R(A_here[,"Mesp1"],
-#                             D_here[,"Mesp1"],
-#                             cell_state = data_f1$Pseudotime,
-#                             kernel = "Linear",
-#                             n_cores = 1L)
-# 
-# gp_mesp1_polyno <- run_gp_R(A_here[,"Mesp1"],
-#                             D_here[,"Mesp1"],
-#                             cell_state = pseudotime_poly,
-#                             kernel = "Linear",
-#                             n_cores = 1L)
-# 
-# gp_mesp1_rbfker <- run_gp_R(A_here[,"Mesp1"],
-#                             D_here[,"Mesp1"],
-#                             cell_state = data_f1$Pseudotime,
-#                             kernel = "RBF",
-#                             n_cores = 1L)
-
-# plot_gene_GP(data_f1, "Mesp1", gp_mesp1_linear, remove_zero = T)
-# plot_gene_GP(data_f1, "Mesp1", gp_mesp1_polyno, remove_zero = T)
-# plot_gene_GP(data_f1, "Mesp1", gp_mesp1_rbfker, remove_zero = T)
-
-
 # run GP over all, doing it gene by gene makes it work even if some fail
-# sample down to 1000 cells to make matrix operations more feasible
 
 sample_indices <- sample(1:nrow(A_here), nrow(A_here))
 sample_indices <- sample_indices[order(sample_indices)]

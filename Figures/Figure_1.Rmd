@@ -25,7 +25,6 @@ knitr::opts_knit$set(root.dir = "~/Desktop/Projects/ASE_Spermatogenesis_Paper_re
 # Analysis feeding into this figure:
 ./Figure1_goncalves_categorization
 ./Figure1_BB_gLMM.R
-./Figure1_ASE_dimension_reduction_new.R
 
 We first define some helper functions and colors and load necessary libraries
 
@@ -185,16 +184,6 @@ the F0s and quantify the results in a barplot. (F1 C)
 
 ```{r goncalves_bulk}
 
-# grab pseudobulk data
-# sce_par_cur_perLibrary_norm <- bulk_all[[1]]
-# sce_fil_cur_perLibrary_norm <- bulk_all[[2]]
-# 
-# 
-# sce_par_cur_perLibrary_norm <- sce_par_cur_perLibrary_norm[!is_maternal, ]
-# sce_fil_cur_perLibrary_norm <- sce_fil_cur_perLibrary_norm[!is_maternal, ]
-# 
-# genes.test <- rownames(sce_par_cur_perLibrary_norm)
-
 # read results from model selection and process
 model.selection.results.bulk <- readRDS("./Data/processed/model_selection_bulk.rds")
 
@@ -257,15 +246,6 @@ We then produce the same plots for spermatocytes, round spermatids and elongatin
 Spermatocytes
 
 ```{r goncalves_sc}
-# sce_par_cur_perLibrary_norm <- bulk_sc[[1]][rownames(bulk_all[[1]]), ]
-# sce_fil_cur_perLibrary_norm <- bulk_sc[[2]][rownames(bulk_all[[1]]), ]
-# 
-# genes.test <- rownames(sce_par_cur_perLibrary_norm)
-# 
-# disps.par.b6 <- estimateDisp(sce_par_cur_perLibrary_norm[,1:2])$tagwise.dispersion
-# names(disps.par.b6) <- rownames(sce_par_cur_perLibrary_norm)
-# disps.par.cast <- estimateDisp(sce_par_cur_perLibrary_norm[,3:4])$tagwise.dispersion
-# names(disps.par.cast) <- rownames(sce_par_cur_perLibrary_norm)
 
 model.selection.results.sc <- readRDS("./Data/processed/model_selection_sc.rds")
 
@@ -325,15 +305,6 @@ ggsave("./Plots/Figure1/SCs_cistrans.pdf", pp)
 Round Spermatids
 
 ```{r gonvalves_rs}
-# sce_par_cur_perLibrary_norm <- bulk_rs[[1]][rownames(bulk_all[[1]]), ]
-# sce_fil_cur_perLibrary_norm <- bulk_rs[[2]][rownames(bulk_all[[1]]), ]
-# 
-# genes.test <- rownames(sce_par_cur_perLibrary_norm)
-# 
-# disps.par.b6 <- estimateDisp(sce_par_cur_perLibrary_norm[,1:2])$tagwise.dispersion
-# names(disps.par.b6) <- rownames(sce_par_cur_perLibrary_norm)
-# disps.par.cast <- estimateDisp(sce_par_cur_perLibrary_norm[,3:4])$tagwise.dispersion
-# names(disps.par.cast) <- rownames(sce_par_cur_perLibrary_norm)
 
 model.selection.results.rs <- readRDS("./Data/processed/model_selection_rs.rds")
 
@@ -392,16 +363,6 @@ ggsave("./Plots/Figure1/RSs_cistrans.pdf", pp)
 Elongating Spermatids
 
 ```{r goncalves_es}
-
-# sce_par_cur_perLibrary_norm <- bulk_es[[1]][rownames(bulk_all[[1]]), ]
-# sce_fil_cur_perLibrary_norm <- bulk_es[[2]][rownames(bulk_all[[1]]), ]
-# 
-# genes.test <- rownames(sce_par_cur_perLibrary_norm)
-# 
-# disps.par.b6 <- estimateDisp(sce_par_cur_perLibrary_norm[,1:2])$tagwise.dispersion
-# names(disps.par.b6) <- rownames(sce_par_cur_perLibrary_norm)
-# disps.par.cast <- estimateDisp(sce_par_cur_perLibrary_norm[,3:4])$tagwise.dispersion
-# names(disps.par.cast) <- rownames(sce_par_cur_perLibrary_norm)
 
 model.selection.results.es <- readRDS("./Data/processed/model_selection_es.rds")
 
@@ -555,6 +516,79 @@ We finally derive an embedding based on allelic rates.
 
 ```{r ase_umap}
 
+library(scran)
+library(scater)
+library(viridis)
+library(pheatmap)
+library(zoo)
+source("./Scripts/General/auxiliary.R")
+source("./Scripts/General/ase_functions.R")
+source("./Scripts/General/reuse_functions.R")
+
+data <- readRDS("./data/processed/sce_merged_new.rds")
+
+data_f1 <- data[,data$Library %in% c("Sample5", "Sample6")]
+data_f1 <- annotate_chromosome_sce(data_f1)
+data_f1 <- data_f1[!is.na(rowData(data_f1)$chromosome_name), ]
+
+# get genes with high counts in both reference and alternative
+total_reference <- rowSums(counts_reference(data_f1))
+total_alternative <- rowSums(counts_alternative(data_f1))
+genes_check <- total_reference > 1000 & total_alternative > 1000 & !rowData(data_f1)$chromosome_name %in% c("MT", "X")
+
+counts_ref <- counts_reference(data_f1[genes_check,])
+counts_alt <- counts_alternative(data_f1[genes_check,])
+counts_total <- counts_ref + counts_alt
+
+input_ref = counts_ref[rowSums(counts_ref) > 0, ]
+
+my_binom_deviance <- function(X, N, p_null = 0.5){
+  # implement deviance score for binomial data
+  # we see that for np = const, n --> inf the score grows and for k/n ~ p_null it is smallest
+  output = X * log(X / (N * p_null)) + (N - X) * log((N - X)/(N*(1-p_null)))
+  output[is.na(output)] = 0 # x * log(x) --> 0
+  output
+}
+
+deviance_data <- my_binom_deviance(counts_ref, counts_total)
+deviance_data <- deviance_data[rowSums(deviance_data) > 0, ]
+
+## look at deviance scores across genes
+
+mean_deviance <- sort(rowMeans(deviance_data), decreasing = T)
+var_deviance <- sort(rowVars(as.matrix(deviance_data)), decreasing = T)
+top_deviant_features <- names(mean_deviance[1:length(mean_deviance)])
+
+hist(log10(mean_deviance + 1), breaks = 100)
+
+pca_output <- prcomp(t(deviance_data[top_deviant_features, ]), center = T, scale = T)
+pca_output_x <- pca_output$x[,1:100]
+pca_output_x <- pca_output_x[!duplicated(pca_output_x), ]
+tsne_rates <- Rtsne::Rtsne(pca_output_x)
+umap_rates <- umap::umap(pca_output_x)
+
+genes_df <- pca_output$rotation
+genes_df <- genes_df[order(rowSums(genes_df[,1:10] ** 2), decreasing = T), ]
+head(genes_df[,1:5], n = 30)
+
+colour_vector <- c("SG" = "#046735",
+                   "SC" = "#D31281",
+                   "RS" = "#282B69",
+                   "ES" = "grey60",
+                   "Sertoli" = "#643F18",
+                   "Leydig" = "#985D25",
+                   "Immune" = "#FFDFB2")
+
+ggplot(data.frame(
+  Umap1 = umap_rates$layout[,1], 
+  Umap2 = umap_rates$layout[,2], 
+  CellType = data_f1[genes_check,rownames(pca_output_x)]$CellType
+), aes(Umap1, Umap2, col = CellType)) + geom_point() + 
+  theme_tsne() + scale_color_manual(values = colour_vector) + 
+  ggtitle("Embedding based on allelic rates") + theme(text = element_text(size = 20))
+
+ggsave("./plots/Figure1/umap_ase.pdf")
+
 ```
 
 
@@ -569,7 +603,6 @@ library(reshape2)
 library(scran)
 library(scater)
 
-#sce.all <- readRDS("~/Desktop/Projects/ASE_Spermatogenesis_Paper/Data/processed/final_sce_f1_dataset_for_supplement.rds")
 sce.all <- readRDS("./Data/processed/sce_merged_new.rds")
 sce.all <- sce.all[,!grepl("Outliers", sce.all$CellType)]
 

@@ -7,7 +7,7 @@ editor_options:
 
 ```{r setup}
 knitr::opts_chunk$set(echo = TRUE)
-knitr::opts_knit$set(root.dir = "~/Desktop/Projects/ASE_Spermatogenesis_Paper/")
+knitr::opts_knit$set(root.dir = "~/Desktop/Projects/ASE_Spermatogenesis_Paper_rerun/")
 ```
 
 ```{r python_paths}
@@ -19,7 +19,6 @@ dali_path = "~/Desktop/PhD/Projects/ASE_Spermatogenesis/Scripts/dali/"
 # get variable degs using ASE-GP model for 
 # a) Cast vs B6 F0s
 # b) Pairwise comps Caroli vs B6 (first), Caroli vs Cast, Cast vs B6 -- slight difference here because we don't use ASE signal but total
-# for static cis we need to compare posterior x ~ N(m, I), x ~ N(0, I) (setting posterior mean to zero)
 
 ```{r load_libraries_and_data}
 library(scran)
@@ -152,6 +151,6 @@ results_per_gene_expressed_intervals_cast <- lapply(genes_test, function(x){
 })
 names(results_per_gene_expressed_intervals_cast) <- genes_test
 
-saveRDS(results_per_gene_expressed_intervals_cast, "~/Desktop/Projects/ASE_Spermatogenesis_Paper/Data/processed/gp_fits_DE_cast_new_2.rds")
+saveRDS(results_per_gene_expressed_intervals_cast, "./Data/processed/gp_fits_DE_cast_new_2.rds")
 
 ```

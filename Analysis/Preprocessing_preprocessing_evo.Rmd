@@ -345,20 +345,19 @@ The metadata can be obtained from ArrayExpress.
 
 ```{r cell-type-recognition}
 # Download metadata file
-#download.file("https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-6946/E-MTAB-6946.processed.3.zip", 
-#                destfile = "cellranger_metadata_1.zip")
-#download.file("https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-6946/E-MTAB-6946.processed.1.zip", 
-#                destfile = "cellranger_metadata.zip")
-#download.file("https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-6946/E-MTAB-6946.processed.5.zip", 
-#                destfile = "cellranger_metadata_emptyDrops.zip")
-#unzip("cellranger_metadata.zip") #
-#unzip("cellranger_metadata.zip") #
-#unzip("cellranger_metadata_emptyDrops.zip") #
+download.file("https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-6946/E-MTAB-6946.processed.3.zip",
+               destfile = "cellranger_metadata_1.zip")
+download.file("https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-6946/E-MTAB-6946.processed.1.zip",
+               destfile = "cellranger_metadata.zip")
+download.file("https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-6946/E-MTAB-6946.processed.5.zip",
+               destfile = "cellranger_metadata_emptyDrops.zip")
+unzip("cellranger_metadata.zip") #
+unzip("cellranger_metadata.zip") #
+unzip("cellranger_metadata_emptyDrops.zip") #
 
-#file.remove("cellranger_metadata.zip")
-#file.remove("cellranger_metadata_emptyDrops.zip")
+file.remove("cellranger_metadata.zip")
+file.remove("cellranger_metadata_emptyDrops.zip")
 
-#metadata <- read.table("./cell_metadata.txt", sep = " ")
 metadata <- read.table("./cell_metadata_emptyDrops.txt", sep = " ")
 
 # Select B6 cells
