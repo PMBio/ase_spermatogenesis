@@ -5,12 +5,6 @@ import os
 
 # this script processes a cellranger possorted bam file with snp tags into two independent matrices, one for the reference and alternative alleles
 # the output should be a expression matrix in long format, i.e. a barcode and feature file and a list with barcode, cell, nReads entries
-# there's a couple of open questions how cellranger does the processing, update while we figure that out
-# for now, we'll filter out reads that 
-# have duplicate UMIs (shouldnt be many, count that) # do that later, no so easy to do efficiently - our duplicate rate should be very low rn
-# aren't in a pre-defined barcode derived from processing the full dataset (first) - done
-# mapq and flag filters?
-# are unclear wrt snp status (one snp supports maternal/one paternal allele - also shouldnt be many, count)
 
 # input files
 input_dir=sys.argv[1]
