@@ -16,4 +16,4 @@ All analysis scripts can be found in /Analysis/, including the figures they main
 
 ## Contact
 
-Jasper Panten (panten@dkfz-heidelberg.de)
+Jasper Panten (j.panten@dkfz-heidelberg.de)
