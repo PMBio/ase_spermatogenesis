@@ -4,7 +4,7 @@ This repository contains all code to reproduce the results from our ASE-spermato
 
 ## Data availability
 
-All data is available at ArrayExpress under the accession number E-MTAB-6934 (previously published B6 samples, https://www.nature.com/articles/s41467-019-09182-1) and E-MTAB-11602 (everything else). This includes raw read files, total and allele-specific quantifications as well as filtered count matrices with cell type annotations. 
+All data is available at ArrayExpress under the accession number E-MTAB-6934 (previously published B6 samples, https://www.nature.com/articles/s41467-019-09182-1) and E-MTAB-11602 (everything else). This includes raw read files, total and allele-specific quantifications as well as filtered count matrices with cell type annotations. The ATAC-Seq data is deposited under the accession number E-MTAB-12685.
 
 ## Preprocessing
 
