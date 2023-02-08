@@ -8,7 +8,7 @@ All data is available at ArrayExpress under the accession number E-MTAB-6934 (pr
 
 ## Preprocessing
 
-Scripts to perform allele-specific expression quantifications can be found in /Analysis/Alignments/. For standard processing of 10x single-cell RNA-Sequencing data, CellRanger was used with default settings. Further preprocessing scripts can be found in /Analysis/. A snakemake workflow to process the ATAC-Seq data can be found in /Analysis/Alignments/ATAC/. 
+Scripts to perform allele-specific expression quantifications can be found in /Analysis/Alignments/scRNASeq/. For standard processing of 10x single-cell RNA-Sequencing data, CellRanger was used with default settings. Further preprocessing scripts can be found in /Analysis/. A snakemake workflow to process the ATAC-Seq data can be found in /Analysis/Alignments/ATACSeq/.
 
 ## Analysis & Figures
 
