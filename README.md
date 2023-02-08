@@ -4,11 +4,11 @@ This repository contains all code to reproduce the results from our ASE-spermato
 
 ## Data availability
 
-All data is available at ArrayExpress under the accession number E-MTAB-6934 (previously published B6 samples, https://www.nature.com/articles/s41467-019-09182-1) and E-MTAB-11602 (everything else). This includes raw read files, total and allele-specific quantifications as well as filtered count matrices with cell type annotations. 
+All data is available at ArrayExpress under the accession number E-MTAB-6934 (previously published B6 samples, https://www.nature.com/articles/s41467-019-09182-1) and E-MTAB-11602 (everything else). This includes raw read files, total and allele-specific quantifications as well as filtered count matrices with cell type annotations. The ATAC-Seq data is deposited under the accession number E-MTAB-12685.
 
 ## Preprocessing
 
-Scripts to perform allele-specific expression quantifications can be found in /Analysis/Alignments/. For standard processing of 10x single-cell RNA-Sequencing data, CellRanger was used with default settings. Further preprocessing scripts can be found in /Analysis/. 
+Scripts to perform allele-specific expression quantifications can be found in /Analysis/Alignments/scRNASeq/. For standard processing of 10x single-cell RNA-Sequencing data, CellRanger was used with default settings. Further preprocessing scripts can be found in /Analysis/. A snakemake workflow to process the ATAC-Seq data can be found in /Analysis/Alignments/ATACSeq/.
 
 ## Analysis & Figures
 
@@ -16,4 +16,4 @@ All analysis scripts can be found in /Analysis/, including the figures they main
 
 ## Contact
 
-Jasper Panten (panten@dkfz-heidelberg.de)
+Jasper Panten (j.panten@dkfz-heidelberg.de)
