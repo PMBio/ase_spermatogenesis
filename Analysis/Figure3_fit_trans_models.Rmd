@@ -160,7 +160,7 @@ colour_vector <- c("SG" = "#046735",
                    "Immune" = "#FFDFB2")
 
 
-setwd("~/Desktop/PhD/Projects/ASE_Spermatogenesis_Paper_rerun/")
+setwd("~/Desktop/PhD/Projects/ASE_Spermatogenesis_Paper_rerun_Revisions/")
 
 library(scran)
 library(scater)
@@ -310,6 +310,7 @@ def fit_vanilla_4(X, Y, model = "trans_dynamic",  n_iterations = 100):
   likelihood = m.maximum_log_likelihood_objective().numpy()
   return([m, predictions, covariance, likelihood])
 
+
 ```
 
 ```{r }
@@ -322,7 +323,6 @@ total_exp <- readRDS("./Data/processed/total_exp.rds")
 
 rs_f0_noStab <- (data_f0_b6_norm[genes_use, ]) / (data_f0_b6_norm[genes_use, ] + data_f0_cast_norm[genes_use, ])
 rs_f1_noStab <- (data_f1_b6[genes_use, ]) / (data_f1_b6[genes_use, ] + data_f1_cast[genes_use, ])
-
 
 run_coreg_gp_python_expressed_intervals_new <- function(gene, model = "full"){
   
@@ -396,6 +396,8 @@ results_per_gene_expressed_intervals <- lapply(genes_use, function(x){
 })
 saveRDS(results_per_gene_expressed_intervals, "./Data/processed/trans_effects_expressed_intervals_new.rds")
 
+length(results_per_gene_expressed_intervals)
+
 genes_test <- genes_test[genes_use, ]
 
 results_per_gene_expressed_intervals <- readRDS("./Data/processed/trans_effects_expressed_intervals_new.rds")
@@ -406,28 +408,28 @@ indices_out <- unlist(lapply(results_per_gene_expressed_intervals, function(x){a
 genes_test_intervals_fixed <- genes_test
 
 genes_test_intervals_fixed$trans_lik_conserved <- unlist(lapply(results_per_gene_expressed_intervals, function(x){
-  if (length(x) == 1){return(NA)}
+  if (length(x[[1]]) == 1){return(NA)}
   else{return(x[[1]][[4]])}
 }))
 genes_test_intervals_fixed$trans_lik_cis_static <- unlist(lapply(results_per_gene_expressed_intervals, function(x){
-  if (length(x) == 1){return(NA)}
+  if (length(x[[1]]) == 1){return(NA)}
   else{return(x[[2]][[4]])}
 }))
 genes_test_intervals_fixed$trans_lik_cis_dynamic <- unlist(lapply(results_per_gene_expressed_intervals, function(x){
-  if (length(x) == 1){return(NA)}
+  if (length(x[[1]]) == 1){return(NA)}
   else{return(x[[3]][[4]])}
 }))
 genes_test_intervals_fixed$trans_lik_trans_static <- unlist(lapply(results_per_gene_expressed_intervals, function(x){
-  if (length(x) == 1){return(NA)}
+  if (length(x[[1]]) == 1){return(NA)}
   else{return(x[[4]][[4]])}
 }))
 genes_test_intervals_fixed$trans_lik_trans_dynamic <- unlist(lapply(results_per_gene_expressed_intervals, function(x){
-  if (length(x) == 1){return(NA)}
+  if (length(x[[1]]) == 1){return(NA)}
   else{return(x[[5]][[4]])}
 }))
 genes_test_intervals_fixed$median_trans <- unlist(lapply(1:length(results_per_gene_expressed_intervals), function(i){
   x = results_per_gene_expressed_intervals[[i]]
-  if (length(x) == 1){return(NA)}
+  if (length(x[[1]]) == 1){return(NA)}
   imbalance_f0 = rev_logit(do.call("cbind", x[[5]][[2]][[1]])[,2])
   imbalance_f1 = rev_logit(do.call("cbind", x[[5]][[2]][[2]])[,2])
   intervals_use = total_exp[i, ] > 0.05
@@ -435,7 +437,7 @@ genes_test_intervals_fixed$median_trans <- unlist(lapply(1:length(results_per_ge
 }))
 genes_test_intervals_fixed$qdiff_trans <- unlist(lapply(1:length(results_per_gene_expressed_intervals), function(i){
   x = results_per_gene_expressed_intervals[[i]]
-  if (length(x) == 1){return(NA)}
+  if (length(x[[1]]) == 1){return(NA)}
   imbalance_f0 = rev_logit(do.call("cbind", x[[5]][[2]][[1]])[,2])
   imbalance_f1 = rev_logit(do.call("cbind", x[[5]][[2]][[2]])[,2])
   intervals_use = total_exp[i, ] > 0.05
@@ -443,7 +445,7 @@ genes_test_intervals_fixed$qdiff_trans <- unlist(lapply(1:length(results_per_gen
 }))
 genes_test_intervals_fixed$qdiff_cis <- unlist(lapply(1:length(results_per_gene_expressed_intervals), function(i){
   x = results_per_gene_expressed_intervals[[i]]
-  if (length(x) == 1){return(NA)}
+  if (length(x[[1]]) == 1){return(NA)}
   imbalance_f0 = rev_logit(do.call("cbind", x[[5]][[2]][[1]])[,2])
   imbalance_f1 = rev_logit(do.call("cbind", x[[5]][[2]][[2]])[,2])
   intervals_use = total_exp[i, ] > 0.05

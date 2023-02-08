@@ -12,7 +12,7 @@ editor_options:
 
 ```{r setup}
 knitr::opts_chunk$set(echo = TRUE)
-knitr::opts_knit$set(root.dir = "~/Desktop/Projects/ASE_Spermatogenesis_Paper_rerun/")
+knitr::opts_knit$set(root.dir = "~/Desktop/Projects/ASE_Spermatogenesis_Paper_rerun_Revisions/")
 ```
 
 ## This script reproduces the plots in Figure 1 and its supplement,
@@ -29,6 +29,8 @@ knitr::opts_knit$set(root.dir = "~/Desktop/Projects/ASE_Spermatogenesis_Paper_re
 We first define some helper functions and colors and load necessary libraries
 
 ```{r load_libraries}
+
+setwd("~/Desktop/Projects/ASE_Spermatogenesis_Paper_rerun_Revisions/")
 
 library(ggplot2)
 library(scran)
@@ -58,20 +60,26 @@ We then plot a UMAP of the F1 mice (Sample5/6) based on MNN-batch-corrected data
 ```{r read_data}
 # read pre-processed data
 data <- readRDS("./Data/processed/sce_merged_new.rds")
+data <- data[,data$Library != "Sample7"]
+data$IndividualSamples <- paste0(data$Dataset, "_", data$Library)
+
 ```
 
 ```{r plot_umap}
+
+data_exp1 <- data[,data$Replicate == "Rep1"]
+
 # compute umap dimensionality reduction
 set.seed(12345)
-corrected <- metadata(data)$corrected[colnames(data), ]
+corrected <- metadata(data_exp1)$corrected[gsub("Exp", "Rep", colnames(data_exp1)), ]
 umap <- umap::umap(corrected)
-reducedDims(data)$UMAP <- umap$layout
+reducedDims(data_exp1)$UMAP <- umap$layout
 
 # create the plot
 pp <- data.frame(
-  Umap1 = reducedDims(data)$UMAP[,1],
-  Umap2 = reducedDims(data)$UMAP[,2],
-  CellType = data$CellType
+  Umap1 = reducedDims(data_exp1)$UMAP[,1],
+  Umap2 = reducedDims(data_exp1)$UMAP[,2],
+  CellType = data_exp1$CellType
 ) %>% 
 ggplot(aes(Umap1, Umap2, col = CellType)) + 
   geom_point(size = 1) +
@@ -82,6 +90,7 @@ pp
 ggsave("./Plots/Figure1/umap_plot.pdf", 
        pp + theme(text = element_text(size=20)) + theme(legend.position = "None") + 
                   xlab("") + ylab(""), width = 2, height = 4)
+
 ```
 
 We now move to the allele-specific data. We first compute pseudo-bulks per cell type and use the classification procedure from Goncalves2012 to 
@@ -112,28 +121,48 @@ normalize_sf <- function(counts){
   return(round(counts))
 }
 
-# make pseudobulk libraries from the same samples
 make_bulk_celltype <- function(data){
   
-  sce_par_cur_perLibrary = data.frame(
-    "Sample1_Reference" = rowSums(counts(data[,data$Library == "Sample1"])),
-    "Sample2_Reference" = rowSums(counts(data[,data$Library == "Sample2"])),
-    "Sample3_Reference" = rowSums(counts(data[,data$Library == "Sample3"])),
-    "Sample4_Reference" = rowSums(counts(data[,data$Library == "Sample4"]))
-  )
+  aggregate_sce <- aggregateAcrossCells(data, data$IndividualSamples, use.assay.type = c("counts_reference", "counts_alternative"))
   
-  sce_fil_cur_perLibrary = data.frame(
-    "Sample5_Reference" = rowSums(counts_reference(data[,data$Library == "Sample5"])),
-    "Sample6_Reference" = rowSums(counts_reference(data[,data$Library == "Sample6"])),
-    "Sample5_Alternative" = rowSums(counts_alternative(data[,data$Library == "Sample5"])),
-    "Sample6_Alternative" = rowSums(counts_alternative(data[,data$Library == "Sample6"]))
-  )
-
+  bulk_par_b6 <- counts_reference(aggregate_sce[,aggregate_sce$Species == "B6"])
+  colnames(bulk_par_b6) <- paste0(colnames(bulk_par_b6), "_Reference")
+  bulk_par_cast <- counts_alternative(aggregate_sce[,aggregate_sce$Species == "CAST"])
+  colnames(bulk_par_cast) <- paste0(colnames(bulk_par_cast), "_Alternative")
+  
+  sce_par_cur_perLibrary <- cbind(bulk_par_b6, bulk_par_cast)
+  
+  bulk_fil_b6 <- counts_reference(aggregate_sce[,aggregate_sce$Species == "B6xCAST"])
+  colnames(bulk_fil_b6) <- paste0(colnames(bulk_fil_b6), "_Reference")
+  bulk_fil_cast <- counts_alternative(aggregate_sce[,aggregate_sce$Species == "B6xCAST"])
+  colnames(bulk_fil_cast) <- paste0(colnames(bulk_fil_cast), "_Alternative")
+  
+  sce_fil_cur_perLibrary <- cbind(bulk_fil_b6, bulk_fil_cast)
+  
+  # sce_par_cur_perLibrary = data.frame(
+  #   "Sample1_Reference" = rowSums(counts(data[,data$Library == "Sample1"])),
+  #   "Sample2_Reference" = rowSums(counts(data[,data$Library == "Sample2"])),
+  #   "Sample3_Alternative" = rowSums(counts(data[,data$Library == "Sample3"])),
+  #   "Sample4_Alternative" = rowSums(counts(data[,data$Library == "Sample4"]))
+  # )
+  # 
+  # sce_fil_cur_perLibrary = data.frame(
+  #   "Sample5_Reference" = rowSums(counts_reference(data[,data$Library == "Sample5"])),
+  #   "Sample6_Reference" = rowSums(counts_reference(data[,data$Library == "Sample6"])),
+  #   "Sample5_Alternative" = rowSums(counts_alternative(data[,data$Library == "Sample5"])),
+  #   "Sample6_Alternative" = rowSums(counts_alternative(data[,data$Library == "Sample6"]))
+  # )
+  # 
   genes.both <- intersect(rownames(sce_par_cur_perLibrary),
                           rownames(sce_fil_cur_perLibrary))
   
   sce_par_cur_perLibrary <- sce_par_cur_perLibrary[genes.both,]
   sce_fil_cur_perLibrary <- sce_fil_cur_perLibrary[genes.both,]
+  
+  # disps.par.b6 <- estimateDisp(sce_par_cur_perLibrary[,1:2])$tagwise.dispersion
+  # names(disps.par.b6) <- rownames(sce_par_cur_perLibrary)
+  # disps.par.cast <- estimateDisp(sce_par_cur_perLibrary[,3:4])$tagwise.dispersion
+  # names(disps.par.cast) <- rownames(sce_par_cur_perLibrary)
   
   sce_par_cur_perLibrary_norm <- normalize_sf(sce_par_cur_perLibrary)
   sce_fil_cur_perLibrary_norm <- normalize_sf(sce_fil_cur_perLibrary)
@@ -142,39 +171,41 @@ make_bulk_celltype <- function(data){
 }
 
 bulk_all <- make_bulk_celltype(data)
-bulk_sc <- make_bulk_celltype(data[,data$CellType == "SC"])
-bulk_rs <- make_bulk_celltype(data[,data$CellType == "RS"])
-bulk_es <- make_bulk_celltype(data[,data$CellType == "ES"])
 
-# # first: plot fold changes f1 vs parental to show dominance of cis-effects
+# downsample parentals 
+# downsample_parentals <- function(x){
+#   sfs <- estimateSizeFactorsForMatrix(cbind(x$, par_cast))
+#   sfs <- min(sfs) / sfs
+#   
+#   par_b6_norm <- downsampleMatrix(par_b6, prop = sfs[1:ncol(par_b6)], bycol = T)
+#   par_cast_norm <- downsampleMatrix(par_cast, prop = sfs[(ncol(par_cast)+1):(ncol(par_cast) + ncol(par_cast))], bycol = T)
+#   
+# }
+
 bulk_all <- list(
-  bulk_all[[1]][rowMeans(bulk_all[[1]]) > 100 & rowMeans(bulk_all[[2]]) > 100, ],
-  bulk_all[[2]][rowMeans(bulk_all[[1]]) > 100 & rowMeans(bulk_all[[2]]) > 100, ]
+  bulk_all[[1]][rowMeans(bulk_all[[1]]) > 50 & rowMeans(bulk_all[[2]]) > 50, ],
+  bulk_all[[2]][rowMeans(bulk_all[[1]]) > 50 & rowMeans(bulk_all[[2]]) > 50, ]
 )
 
-# logtransform and compute fold changes
 plot_fc_df <- data.frame(
-  FC_parental = log(rowMeans(bulk_all[[1]][,1:2]) + 1) - log(rowMeans(bulk_all[[1]][,3:4]) + 1),
-  FC_filial = log(rowMeans(bulk_all[[2]][,1:2]) + 1) - log(rowMeans(bulk_all[[2]][,3:4]) + 1)
+  FC_parental = log(rowMeans(bulk_all[[1]][,1:2]) + 1) - log(rowMeans(bulk_all[[1]][,7:8]) + 1),
+  FC_filial = log(rowMeans(bulk_all[[2]][,1:2]) + 1) - log(rowMeans(bulk_all[[2]][,7:8]) + 1)
 )
 
-# remove maternally inherited genes
-# fetch chromosome annotations from EnsDb.Mmusculus.v79
-chromosome_annotation <- annotate_chromosome_new(rownames(bulk_all[[1]]))
-is_maternal <- chromosome_annotation$chromosome_name %in% c("MT", "X") # mark maternally inherited genes (X chromosome + mitochondrial genome)
+chromosome_annotation <- annotate_chromosome_list(rownames(bulk_all[[1]]))
+is_maternal <- chromosome_annotation$chromosome_name %in% c("MT", "X")
 
 plot_fc_df$is_mito <- is_maternal
+
 bulk_correlation <- cor(plot_fc_df$FC_parental[!plot_fc_df$is_mito ], plot_fc_df$FC_filial[!plot_fc_df$is_mito ])
 bulk_correlation <- round(bulk_correlation, digits = 2)
 
-ggplot(plot_fc_df, aes(FC_filial, FC_parental, col = is_mito)) + geom_point(size = 0.5) +
-  xlab("log2(F1_B6/F1_CAST)") + ylab("log2(F0_B6/F0_CAST)") +
-  coord_fixed() + labs(colour="Maternal chromosomes") + geom_abline(linetype = "dashed") +
-  scale_color_manual(values = c("grey", "red")) +
-  xlim(c(-10, 10)) + ylim(c(-10, 10)) +
-  theme_paper(textsize = 40) + 
-  annotate("text", x = -1, y = 10, label = paste0("Rho (without MT/X) = ", bulk_correlation), size = 12)
-
+plot_fc_df %>%
+  # dplyr::filter(!is_maternal) %>%
+  ggplot(aes(x = FC_filial, y = FC_parental, col = is_maternal)) + geom_point(size = 0.5)  + theme_paper() + 
+    geom_abline() + geom_hline(yintercept = 0, linetype = "dashed") + geom_vline(xintercept = 0, linetype = "dashed") + 
+    scale_color_manual(values = c("grey", "red")) + labs(color = "Maternally inherited \n chromosome") + 
+    xlab("Allelic Fold Change (F1)") + ylab("Allelic Fold Change (F0)") + theme_paper(textsize = 50)
 ggsave("./Plots/FigureS1/FigS1_scatterplot.pdf")
 
 ```
@@ -206,7 +237,7 @@ model.selection.results.bulk[abs(model.selection.results.bulk$FC_parental) > cf,
 sigsn <- !(abs(model.selection.results.bulk$FC_filial) == cf | abs(model.selection.results.bulk$FC_parental) == cf)
 model.selection.results.bulk$plot_sign <- ifelse(sigsn, "1", "2")
 
-scatter_p <- ggplot(model.selection.results.bulk, aes(FC_filial, FC_parental, col = Category)) + 
+scatter_p <- ggplot(model.selection.results.bulk, aes(FC_filial, FC_parental, col = CategoryNew)) + 
   geom_abline(linetype = "dashed") + 
   geom_hline(linetype = "dashed", yintercept = 0) + 
   geom_vline(linetype = "dashed", xintercept = 0) + 
@@ -223,7 +254,7 @@ scatter_p <- ggplot(model.selection.results.bulk, aes(FC_filial, FC_parental, co
   ggtitle("All celltypes") + theme(plot.title = element_text(hjust = 0.5))
 
 distribution_p <- ggplot(model.selection.results.bulk, 
-                         aes(y = 1, fill = forcats::fct_rev(Category))) + 
+                         aes(y = 1, fill = forcats::fct_rev(CategoryNew))) + 
   geom_bar(position = "fill", col = "black") + 
   theme_classic() + 
   scale_fill_manual(values = colours_cis_trans) + 
@@ -264,7 +295,7 @@ model.selection.results.sc[abs(model.selection.results.sc$FC_parental) > cf, ]$F
 sigsn <- !(abs(model.selection.results.sc$FC_filial) == cf | abs(model.selection.results.sc$FC_parental) == cf)
 model.selection.results.sc$plot_sign <- ifelse(sigsn, "1", "2")
 
-scatter_p <- ggplot(model.selection.results.sc, aes(FC_filial, FC_parental, col = Category)) + 
+scatter_p <- ggplot(model.selection.results.sc, aes(FC_filial, FC_parental, col = CategoryNew)) + 
   geom_abline(linetype = "dashed") + 
   geom_hline(linetype = "dashed", yintercept = 0) + 
   geom_vline(linetype = "dashed", xintercept = 0) + 
@@ -282,7 +313,7 @@ scatter_p <- ggplot(model.selection.results.sc, aes(FC_filial, FC_parental, col 
   xlab("") + ylab("")
 
 distribution_p <- ggplot(model.selection.results.sc, 
-                         aes(y = 1, fill = forcats::fct_rev(Category))) + 
+                         aes(y = 1, fill = forcats::fct_rev(CategoryNew))) + 
   geom_bar(position = "fill", col = "black") + 
   theme_classic() + 
   scale_fill_manual(values = colours_cis_trans) + 
@@ -298,7 +329,6 @@ pp <- gridExtra::grid.arrange(scatter_p, distribution_p, nrow = 2,
                         heights=c(4,1))
 
 ggsave("./Plots/Figure1/SCs_cistrans.pdf", pp)
-
 
 ```
 
@@ -323,7 +353,7 @@ model.selection.results.rs[abs(model.selection.results.rs$FC_parental) > cf, ]$F
 sigsn <- !(abs(model.selection.results.rs$FC_filial) == cf | abs(model.selection.results.rs$FC_parental) == cf)
 model.selection.results.rs$plot_sign <- ifelse(sigsn, "1", "2")
 
-scatter_p <- ggplot(model.selection.results.rs, aes(FC_filial, FC_parental, col = Category)) + 
+scatter_p <- ggplot(model.selection.results.rs, aes(FC_filial, FC_parental, col = CategoryNew)) + 
   geom_abline(linetype = "dashed") + 
   geom_hline(linetype = "dashed", yintercept = 0) + 
   geom_vline(linetype = "dashed", xintercept = 0) + 
@@ -341,7 +371,7 @@ scatter_p <- ggplot(model.selection.results.rs, aes(FC_filial, FC_parental, col 
   ggtitle("Round Spermatids") + theme(plot.title = element_text(hjust = 0.5))
 
 distribution_p <- ggplot(model.selection.results.rs, 
-                         aes(y = 1, fill = forcats::fct_rev(Category))) + 
+                         aes(y = 1, fill = forcats::fct_rev(CategoryNew))) + 
   geom_bar(position = "fill", col = "black") + 
   theme_classic() + 
   scale_fill_manual(values = colours_cis_trans) + 
@@ -381,7 +411,7 @@ model.selection.results.es[abs(model.selection.results.es$FC_parental) > cf, ]$F
 sigsn <- !(abs(model.selection.results.es$FC_filial) == cf | abs(model.selection.results.es$FC_parental) == cf)
 model.selection.results.es$plot_sign <- ifelse(sigsn, "1", "2")
 
-scatter_p <- ggplot(model.selection.results.es, aes(FC_filial, FC_parental, col = Category)) + 
+scatter_p <- ggplot(model.selection.results.es, aes(FC_filial, FC_parental, col = CategoryNew)) + 
   geom_abline(linetype = "dashed") + 
   geom_hline(linetype = "dashed", yintercept = 0) + 
   geom_vline(linetype = "dashed", xintercept = 0) + 
@@ -399,7 +429,7 @@ scatter_p <- ggplot(model.selection.results.es, aes(FC_filial, FC_parental, col 
   ggtitle("Elongating Spermatids") + theme(plot.title = element_text(hjust = 0.5))
 
 distribution_p <- ggplot(model.selection.results.es, 
-                         aes(y = 1, fill = forcats::fct_rev(Category))) + 
+                         aes(y = 1, fill = forcats::fct_rev(CategoryNew))) + 
   geom_bar(position = "fill", col = "black") + 
   theme_classic() + 
   scale_fill_manual(values = colours_cis_trans) + 
@@ -436,31 +466,37 @@ model.selection.results.sc_here <- model.selection.results.sc[genes_check, ]
 model.selection.results.rs_here <- model.selection.results.rs[genes_check, ]
 
 plot_df <- data.frame(
-  cis_sc = model.selection.results.sc_here$Expr_Fil_B6 / (model.selection.results.sc_here$Expr_Fil_B6 + model.selection.results.sc_here$Expr_Fil_Cast), 
-  par_sc = model.selection.results.sc_here$Expr_Par_B6 / (model.selection.results.sc_here$Expr_Par_B6 + model.selection.results.sc_here$Expr_Par_Cast), 
-  cis_rs = model.selection.results.rs_here$Expr_Fil_B6 / (model.selection.results.rs_here$Expr_Fil_B6 + model.selection.results.rs_here$Expr_Fil_Cast), 
-  par_rs = model.selection.results.rs_here$Expr_Par_B6 / (model.selection.results.rs_here$Expr_Par_B6 + model.selection.results.rs_here$Expr_Par_Cast), 
+  cis_sc = log2(model.selection.results.sc_here$Expr_Fil_B6 / (model.selection.results.sc_here$Expr_Fil_Cast)), 
+  par_sc = log2(model.selection.results.sc_here$Expr_Par_B6 / (model.selection.results.sc_here$Expr_Par_Cast)), 
+  cis_rs = log2(model.selection.results.rs_here$Expr_Fil_B6 / (model.selection.results.rs_here$Expr_Fil_Cast)), 
+  par_rs = log2(model.selection.results.rs_here$Expr_Par_B6 / (model.selection.results.rs_here$Expr_Par_Cast)), 
   pvalue = p.adjust(pvals_df[genes_check,]$X2)
 )
 
 plot_df <- plot_df[!is.na(plot_df$pvalue), ]
+plot_df[abs(plot_df) > 5] <- 5 * sign(plot_df[abs(plot_df) > 5])
+plot_df$triangle <- abs(plot_df$cis_sc) == 5 | abs(plot_df$cis_rs) == 5
+
 plot_df$color_in <- "FALSE"
-plot_df$color_in[plot_df$cis_sc - plot_df$cis_rs > 0.05 & plot_df$pvalue < 0.1] <- "SC"
-plot_df$color_in[plot_df$cis_sc - plot_df$cis_rs < -0.05 & plot_df$pvalue < 0.1] <- "RS"
+plot_df$color_in[plot_df$cis_sc - plot_df$cis_rs > 0.5 & plot_df$pvalue < 0.1] <- "SC"
+plot_df$color_in[plot_df$cis_sc - plot_df$cis_rs < -0.5 & plot_df$pvalue < 0.1] <- "RS"
 
 ggplot(plot_df, aes(cis_sc, cis_rs)) + 
-  geom_point(data = plot_df[plot_df$pvalue >= 0.1, ], aes(col = color_in, fill = color_in), size = 4, shape = 21,stroke = 0.25) + 
-  geom_point(data = plot_df[plot_df$pvalue < 0.1, ], aes(col = color_in, fill = color_in), size = 4, shape = 21,stroke = 0.25) + 
+  geom_point(data = plot_df[plot_df$pvalue >= 0.1 & !plot_df$triangle, ], aes(col = color_in, fill = color_in), size = 4, shape = 21,stroke = 0.25) + 
+  geom_point(data = plot_df[plot_df$pvalue < 0.1 & !plot_df$triangle, ], aes(col = color_in, fill = color_in), size = 4, shape = 21,stroke = 0.25) + 
+  geom_point(data = plot_df[plot_df$pvalue >= 0.1 & plot_df$triangle, ], aes(col = color_in, fill = color_in), size = 4, shape = 24,stroke = 0.25) + 
+  geom_point(data = plot_df[plot_df$pvalue < 0.1 & plot_df$triangle, ], aes(col = color_in, fill = color_in), size = 4, shape = 24,stroke = 0.25) + 
   geom_abline(col = "darkred") + theme_classic() + 
-  scale_x_continuous(breaks = c(0, 0.5, 1), limits = c(0, 1)) + 
-  scale_y_continuous(breaks = c(0, 0.5, 1), limits = c(0, 1)) + 
-  geom_vline(xintercept = 0.5, linetype = "dashed") + geom_hline(yintercept = 0.5, linetype = "dashed") + 
+  #scale_x_continuous(breaks = c(0, 0.5, 1), limits = c(0, 1)) + 
+  #scale_y_continuous(breaks = c(0, 0.5, 1), limits = c(0, 1)) + 
+  geom_vline(xintercept = 0, linetype = "dashed") + geom_hline(yintercept = 0, linetype = "dashed") + 
   scale_color_manual(values = list("SC" = "#D31281", "RS" = "#2A348B", "FALSE" = "black")) + 
   scale_fill_manual(values = list("SC" = "#D31281", "RS" = "#2A348B", "FALSE" = "white")) + 
-  coord_fixed() + xlab("Spermatocytes \n Allelic imbalance") + ylab("Round Spermatids \n Allelic imbalance") + 
+  coord_fixed() + xlab("Spermatocytes \n log2 Allelic Fold Change") + ylab("Round Spermatids \n log2 Allelic Fold Change") + 
   theme(text = element_text(size=40), legend.position = "none") + 
-  annotate(geom = "text", x = 0.95, y = .1, label = paste0("higher \n in SC \n (", table(plot_df$color_in)[["SC"]], ")"), size = 12, col = "#D31281") + 
-  annotate(geom = "text", x = 0.07, y = 0.92, label = paste0("higher \n in RS \n (", table(plot_df$color_in)[["RS"]], ")"), size = 12, col = "#2A348B")
+  annotate(geom = "text", x = 3.8, y = -3.8, label = paste0("higher \n in SC \n (", table(plot_df$color_in)[["SC"]], ")"), size = 12, col = "#D31281") + 
+  annotate(geom = "text", x = -3.8, y = 3.8, label = paste0("higher \n in RS \n (", table(plot_df$color_in)[["RS"]], ")"), size = 12, col = "#2A348B") + 
+  theme(plot.margin=grid::unit(c(0,0,0,0), "mm"))
 
 ggsave("./Plots/Figure1/scatter_sc_rs.pdf")
 
@@ -468,7 +504,7 @@ ggsave("./Plots/Figure1/scatter_sc_rs.pdf")
 
 ```{r glm_test_sc_rs}
 
-# mu scatters sc vs rs
+# mu scattees sc vs es
 pvals_df <- readRDS("./Data/processed/vglm_pvals_sc_es")
 
 rownames(model.selection.results.sc) <- model.selection.results.sc$Gene
@@ -481,31 +517,37 @@ model.selection.results.sc_here <- model.selection.results.sc[genes_check, ]
 model.selection.results.es_here <- model.selection.results.es[genes_check, ]
 
 plot_df <- data.frame(
-  cis_sc = model.selection.results.sc_here$Expr_Fil_B6 / (model.selection.results.sc_here$Expr_Fil_B6 + model.selection.results.sc_here$Expr_Fil_Cast), 
-  par_sc = model.selection.results.sc_here$Expr_Par_B6 / (model.selection.results.sc_here$Expr_Par_B6 + model.selection.results.sc_here$Expr_Par_Cast), 
-  cis_es = model.selection.results.es_here$Expr_Fil_B6 / (model.selection.results.es_here$Expr_Fil_B6 + model.selection.results.es_here$Expr_Fil_Cast), 
-  par_es = model.selection.results.es_here$Expr_Par_B6 / (model.selection.results.es_here$Expr_Par_B6 + model.selection.results.es_here$Expr_Par_Cast), 
+  cis_sc = log2(model.selection.results.sc_here$Expr_Fil_B6 / (model.selection.results.sc_here$Expr_Fil_Cast)), 
+  par_sc = log2(model.selection.results.sc_here$Expr_Par_B6 / (model.selection.results.sc_here$Expr_Par_Cast)), 
+  cis_es = log2(model.selection.results.es_here$Expr_Fil_B6 / (model.selection.results.es_here$Expr_Fil_Cast)), 
+  par_es = log2(model.selection.results.es_here$Expr_Par_B6 / (model.selection.results.es_here$Expr_Par_Cast)), 
   pvalue = p.adjust(pvals_df[genes_check,]$X2)
 )
 
 plot_df <- plot_df[!is.na(plot_df$pvalue), ]
+plot_df[abs(plot_df) > 5] <- 5 * sign(plot_df[abs(plot_df) > 5])
+plot_df$triangle <- abs(plot_df$cis_sc) == 5 | abs(plot_df$cis_es) == 5
+
 plot_df$color_in <- "FALSE"
-plot_df$color_in[plot_df$cis_sc - plot_df$cis_es > 0.05 & plot_df$pvalue < 0.1] <- "SC"
-plot_df$color_in[plot_df$cis_sc - plot_df$cis_es < -0.05 & plot_df$pvalue < 0.1] <- "ES"
+plot_df$color_in[plot_df$cis_sc - plot_df$cis_es > 0.5 & plot_df$pvalue < 0.1] <- "SC"
+plot_df$color_in[plot_df$cis_sc - plot_df$cis_es < -0.5 & plot_df$pvalue < 0.1] <- "ES"
 
 ggplot(plot_df, aes(cis_sc, cis_es)) + 
-  geom_point(data = plot_df[plot_df$pvalue >= 0.1, ], aes(col = color_in, fill = color_in), size = 4, shape = 21,stroke = 0.25) + 
-  geom_point(data = plot_df[plot_df$pvalue < 0.1, ], aes(col = color_in, fill = color_in), size = 4, shape = 21,stroke = 0.25) + 
+  geom_point(data = plot_df[plot_df$pvalue >= 0.1 & !plot_df$triangle, ], aes(col = color_in, fill = color_in), size = 4, shape = 21,stroke = 0.25) + 
+  geom_point(data = plot_df[plot_df$pvalue < 0.1 & !plot_df$triangle, ], aes(col = color_in, fill = color_in), size = 4, shape = 21,stroke = 0.25) + 
+  geom_point(data = plot_df[plot_df$pvalue >= 0.1 & plot_df$triangle, ], aes(col = color_in, fill = color_in), size = 4, shape = 24,stroke = 0.25) + 
+  geom_point(data = plot_df[plot_df$pvalue < 0.1 & plot_df$triangle, ], aes(col = color_in, fill = color_in), size = 4, shape = 24,stroke = 0.25) + 
   geom_abline(col = "darkred") + theme_classic() + 
-  scale_x_continuous(breaks = c(0, 0.5, 1), limits = c(0, 1)) + 
-  scale_y_continuous(breaks = c(0, 0.5, 1), limits = c(0, 1)) + 
-  geom_vline(xintercept = 0.5, linetype = "dashed") + geom_hline(yintercept = 0.5, linetype = "dashed") + 
+  #scale_x_continuous(breaks = c(0, 0.5, 1), limits = c(0, 1)) + 
+  #scale_y_continuous(breaks = c(0, 0.5, 1), limits = c(0, 1)) + 
+  geom_vline(xintercept = 0, linetype = "dashed") + geom_hline(yintercept = 0, linetype = "dashed") + 
   scale_color_manual(values = list("SC" = "#D31281", "ES" = "grey60", "FALSE" = "black")) + 
   scale_fill_manual(values = list("SC" = "#D31281", "ES" = "grey60", "FALSE" = "white")) + 
-  coord_fixed() + xlab("Spermatocytes \n Allelic imbalance") + ylab("Elongating Spermatids \n Allelic imbalance") + 
+  coord_fixed() + xlab("Spermatocytes \n log2 Allelic Fold Change") + ylab("Round Spermatids \n log2 Allelic Fold Change") + 
   theme(text = element_text(size=40), legend.position = "none") + 
-  annotate(geom = "text", x = 0.95, y = .1, label = paste0("higher \n in SC \n (", table(plot_df$color_in)[["SC"]], ")"), size = 12, col = "#D31281") + 
-  annotate(geom = "text", x = 0.07, y = 0.92, label = paste0("higher \n in ES \n (", table(plot_df$color_in)[["ES"]], ")"), size = 12, col = "grey60")
+  annotate(geom = "text", x = 3.8, y = -3.8, label = paste0("higher \n in SC \n (", table(plot_df$color_in)[["SC"]], ")"), size = 12, col = "#D31281") + 
+  annotate(geom = "text", x = -3.8, y = 3.8, label = paste0("higher \n in ES \n (", table(plot_df$color_in)[["ES"]], ")"), size = 12, col = "grey60") + 
+  theme(plot.margin=grid::unit(c(0,0,0,0), "mm"))
 
 ggsave("./Plots/Figure1/scatter_sc_es.pdf")
 
@@ -596,6 +638,8 @@ ggsave("./plots/Figure1/umap_ase.pdf")
 
 ```{r supp1}
 
+setwd("~/Desktop/Projects/ASE_Spermatogenesis_Paper_rerun_Revisions/")
+
 ## Supplementary plots Figure 1
 
 library(tidyverse)
@@ -603,8 +647,9 @@ library(reshape2)
 library(scran)
 library(scater)
 
-sce.all <- readRDS("./Data/processed/sce_merged_new.rds")
-sce.all <- sce.all[,!grepl("Outliers", sce.all$CellType)]
+sce.all <- readRDS("./Data/processed/final_sce_f1_dataset_for_supplement.rds")
+sce.all <- sce.all[,!grepl("Outliers", sce.all$AnnotatedClusters)]
+sce.all <- sce.all[,sce.all$Library != "Sample7"]
 
 library_colors <- list(
   "B6_Sample1" = "black",
@@ -623,26 +668,27 @@ sample_colors <- list(
 
 # recompute a clean umap without outlier cells
 set.seed(12345)
-corrected <- metadata(sce.all)$corrected[colnames(sce.all), ]
+corrected <- metadata(sce.all)$corrected[gsub("Exp", "Rep", colnames(sce.all)), ]
 umap <- umap::umap(corrected)
 reducedDims(sce.all)$UMAP <- umap$layout
 
 # Supp 1_1:
 stats.df <- read.csv("./Data/processed/filtering_stats.csv", row.names = 1)
+stats.df <- stats.df[stats.df$Library != "Sample7", ]
 
 stats.df %>% 
   dplyr::rename(BeforeFiltering = No_cells) %>%
-  pivot_longer(-c(Sample, Library)) %>%
-  ggplot(aes(x = Library, y = value, fill = Sample, group = name)) + 
+  pivot_longer(-c(Sample, Library, Replicate)) %>%
+  ggplot(aes(x = Library, y = value / 1000, fill = Sample, group = name)) + 
     geom_bar(stat = "identity", position = "dodge") + 
-    geom_point(aes(x = Library, y = value + 300, col = name, group = name), position = position_dodge(width = 1), size = 10) + 
+    geom_point(aes(x = Library, y = (value + 300) / 1000, col = name, group = name), position = position_dodge(width = 1), size = 10) + 
     theme_classic() + 
     coord_flip() + 
-    scale_color_manual(values = c("black", "grey")) + ylab("Number of cells") + 
+    scale_color_manual(values = c("black", "grey")) + ylab("Number of cells (x1000)") + 
     scale_fill_manual(values = sample_colors) + 
-    theme_paper(textsize = 50) + xlab("")
+    theme_paper(textsize = 50) + xlab("") + facet_wrap(~Replicate)
 
-ggsave("./Plots/FigureS1/FigS1_1.pdf")
+ggsave("./Plots/FigureS1/FigS1_1.pdf", width = 16, height = 10)
 
 # Supp 1_2: 
 
@@ -650,17 +696,18 @@ data_coverage <- data.frame(
   Library = colData(sce.all)$Library, 
   Sample = colData(sce.all)$Sample, 
   Library_Sample = paste0(colData(sce.all)$Sample, "_", colData(sce.all)$Library), 
-  detected = colData(sce.all)$detected
+  detected = colData(sce.all)$detected, 
+  Experiment = sce.all$Replicate
 )
 
-ggplot(data_coverage, aes(y = detected, x = Library, fill = Library_Sample)) + 
-  geom_violin() + scale_fill_manual(values = library_colors) + theme_classic() + 
-  theme(text = element_text(size = 20)) + ylab("Number of detected genes") + xlab("") + 
+ggplot(data_coverage, aes(y = detected / 1000, x = Library, fill = Library_Sample)) + 
+  geom_violin() + geom_boxplot(fill = "white", outlier.color = NA, width = 0.1) +  scale_fill_manual(values = library_colors) + theme_classic() + 
+  theme(text = element_text(size = 20)) + ylab("Number of detected genes \n (x1000)") + xlab("") + 
   coord_flip() + theme_paper(textsize = 50) + 
-  theme(legend.position = "None") + theme(aspect.ratio = 1.5)
+  theme(legend.position = "None") + facet_wrap(~Experiment) + 
+  theme(plot.margin=grid::unit(c(0,0,0,0), "mm"))
 
-ggsave("./Plots/FigureS1/FigS1_2.pdf")
-
+ggsave("./Plots/FigureS1/FigS1_2.pdf", width = 12, height = 10)
 
 # Supp 1_3:
 
@@ -669,28 +716,31 @@ data_tsne <- data.frame(
   Sample = colData(sce.all)$Sample, 
   Library_Sample = paste0(colData(sce.all)$Sample, "_", colData(sce.all)$Library), 
   Umap1 = reducedDims(sce.all)$UMAP[,1], 
-  Umap2 = reducedDims(sce.all)$UMAP[,2]
+  Umap2 = reducedDims(sce.all)$UMAP[,2], 
+  Experiment = sce.all$Replicate
 )
 
 ggplot(data_tsne, aes(Umap1, Umap2, col = Library_Sample)) + 
-  geom_point(alpha = 0.2) + theme_tsne() + facet_wrap(~Sample, nrow = 2) +
-  scale_color_manual(values = library_colors) + coord_fixed() + 
+  geom_point(alpha = 0.2) + theme_tsne() + facet_wrap(~Sample + Experiment, nrow = 3) +
+  scale_color_manual(values = library_colors) + 
   theme(text = element_text(size= 50), legend.position = "None")
 
-ggsave("./Plots/FigureS1/FigS1_3.pdf")
+ggsave("./Plots/FigureS1/FigS1_3.pdf", width = 12, height = 12)
 
 # Supp 1_4: 
 
 colour_vector <- c("Spermatogonia" = "#046735",
-                   "Spermatogonia / Leptotene" = "#FBDCEA", 
+                   "Leptotene" = "#FBDCEA", 
                    "Pachytene" = "#D31281",
                    "Diplotene" = "#7E2678",
-                   "Meiosis" = "#502269",
+                   "Meiosis (1)" = "#502269",
+                   "Meiosis (2)" = "#502269",
                    "Round Spermatids (1)" = "#B3A9D3",
                    "Round Spermatids (2)" = "#D8DAEC",
                    "Round Spermatids (3)" = "#9595C9",
                    "Round Spermatids (4)" = "#6167AF",
                    "Round Spermatids (5)" = "#2A348B",
+                   "Round Spermatids (6)" = "#2A348B",
                    "Elongating Spermatids (1)" = "#171447",
                    "Elongating Spermatids (2)" = "#22232B",
                    "Elongating Spermatids (3)" = "#444A5E",
@@ -722,24 +772,27 @@ marker_genes <- c("Dazl", "Hormad1", "Piwil1", "Pou5f2", "Tex21", "Prm1", "Cst12
 
 data_genes <- cbind(2 ** data.frame(as.matrix(t(logcounts(sce.all[marker_genes, ])))), 
                     Sample = colData(sce.all)$Sample, 
-                    CellType = colData(sce.all)$AnnotatedClusters)
+                    CellType = colData(sce.all)$AnnotatedClusters, 
+                    Experiment = sce.all$Replicate)
+data_genes[data_genes$CellType == "Immune/Endothelial", ]$CellType <- "Others" # Rename for simplicity
 
 data_genes_transformed <-
-  data_genes %>% pivot_longer(-c(Sample, CellType), names_to = "Gene") %>%
-  group_by(Sample, CellType, Gene) %>%
+  data_genes %>% pivot_longer(-c(Sample, CellType, Experiment), names_to = "Gene") %>%
+  group_by(Sample, CellType, Gene, Experiment) %>%
   summarize(value = mean(value)) %>% ungroup() %>%
   group_by(Gene) %>%
   mutate(value = scale(value))
 
-data_genes_transformed$CellType <- factor(data_genes_transformed$CellType, levels = c("SG", "SC", "RS", "ES", "Sertoli", "Leydig", "Immune/Endothelial"))
+data_genes_transformed$CellType <- factor(data_genes_transformed$CellType, levels = c("SG", "SC", "RS", "ES", "Sertoli", "Leydig", "Others"))
 data_genes_transformed$Gene <- factor(data_genes_transformed$Gene, levels = marker_genes)
 
 ggplot(data_genes_transformed, aes(x = CellType, y = Gene, fill = Sample, size = value, group = Sample)) + 
   geom_point(position=position_dodge(width=0.8), shape = 22, col = "black") + scale_fill_manual(values = sample_colors) + 
-  theme_paper(textsize = 50) + scale_size_area() + 
-  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+  theme_paper(textsize = 30) + scale_size_area() + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~Experiment) + 
+  labs(size = "Scaled \n Expression") + xlab("") + ylab("")
 
-ggsave("./Plots/FigureS1/FigS1_5.pdf")
+ggsave("./Plots/FigureS1/FigS1_5.pdf", width = 20, height = 5)
 
 # Supp 1_6:
 
@@ -747,57 +800,59 @@ data.frame(
   Library = sce.all$Library, 
   Sample = sce.all$Sample, 
   Library_Sample = paste0(sce.all$Sample, "_", sce.all$Library), 
-  CellType = sce.all$AnnotatedClusters
-) %>% group_by(Library_Sample, CellType) %>%
+  CellType = sce.all$AnnotatedClusters, 
+  Experiment = sce.all$Replicate
+) %>% group_by(Library_Sample, CellType, Experiment) %>%
   dplyr::count() %>%
-  group_by(Library_Sample) %>%
+  group_by(Library_Sample, Experiment) %>%
   mutate(per =  100 * n / sum(n)) %>%
 ggplot(aes(x = CellType, fill = Library_Sample, y = per)) + 
   geom_bar(position = "dodge", stat = "identity") + 
-  ylim(0, 50) +
+  ylim(0, 60) +
   scale_fill_manual(values = library_colors) + 
   theme_paper(textsize = 40) + ylab("Cell Type Proportions [%]") + 
-  coord_flip() + xlab("")
+  coord_flip() + xlab("") + facet_wrap(~Experiment)
 
-ggsave("./Plots/FigureS1/FigS1_6.pdf")
+ggsave("./Plots/FigureS1/FigS1_6.pdf", width = 18, height = 12)
 
 # Allelic data
 
-sce.merged <- sce.all
+sce.merged <- readRDS("./Data/processed/sce_merged_new.rds")
+sce.merged <- sce.merged[,sce.merged$Library != "Sample7"]
 sce.merged <- annotate_chromosome_sce(sce.merged)
 
 df_total_counts <- data.frame(
   Species = sce.merged$Species, 
   Library = sce.merged$Library, 
+  Experiment = sce.merged$Replicate, 
   Counts_Ref = colSums(counts_reference(sce.merged)), 
   Counts_Alt = colSums(counts_alternative(sce.merged))
-) %>% pivot_longer(-c(Species, Library)) %>%
+) %>% pivot_longer(-c(Species, Library, Experiment)) %>%
   dplyr::rename(Allele = name) %>% dplyr::rename(Counts = value)
 
 average.reference <- df_total_counts %>%
   dplyr::filter(Allele == "Counts_Ref") %>%
-  group_by(Library) %>%
+  group_by(Library, Experiment) %>%
   summarize(sum = sum(Counts))
 average.alternative <- df_total_counts %>%
   dplyr::filter(Allele == "Counts_Alt") %>%
-  group_by(Library) %>%
+  group_by(Library, Experiment) %>%
   summarize(sum = sum(Counts))
 ratios <- round(average.reference$sum / (average.reference$sum + average.alternative$sum), digits = 3) * 100
   
-ggplot(df_total_counts, aes(x = Library, y = Counts + 1, fill = Allele)) + 
+ggplot(df_total_counts, aes(x = paste0(Library, "_", Experiment), y = Counts + 1, fill = Allele)) + 
   geom_boxplot() + 
   ylab("log(ReadCounts + 1) per cell") + 
   xlab("") + 
-  scale_y_log10(limits = c(1, 1.5e5)) + 
+  scale_y_log10(limits = c(1, 2.5e5)) + 
   annotate("text", label = paste0(as.character(ratios), "%"), 
-           x = 1:6, y = 60000, size = 10) + 
+           x = 1:18, y = 100000 - (1 - 1:18 %% 2) * 50000 , size = 8) + 
   annotate("text", label = "Percent reference reads: ", 
-           x = 2.6, y = 140000, size = 12) + 
+           x = 3.8, y = 240000, size = 12) + 
   theme_classic() + 
   theme(axis.text.x = element_text(angle = 45, hjust=1)) + 
-  theme_paper(textsize = 40)
-
-ggsave("./Plots/FigureS1/FigS1_7.pdf")
+  theme_paper(textsize = 40) + theme(legend.position = "top")
+ggsave("./Plots/FigureS1/FigS1_7.pdf", width = 16, height = 10)
 
 # Plot aggregated data across cells to compare on gene level
 sce_sample1 <- sce.merged[,sce.merged$Library == "Sample1"]
@@ -827,9 +882,8 @@ df_plot_5[names(rowMeans(counts_reference(sce_sample5))),]$Counts_Alternative <-
   rowMeans(counts_alternative(sce_sample5))
 
 p1 <- ggplot(df_plot_1, aes(log(Counts_Reference + 1), log(Counts_Alternative + 1))) + 
-  geom_point(size = 0.5) + 
+  geom_point(size = 4) + 
   xlim(0, 4) + ylim(0, 4) + 
-  coord_fixed() + 
   theme_classic() + 
   annotate("text", label = "B6 (F0)", 
            x = 0.7, y = 3.9, size = 15) + 
@@ -838,9 +892,8 @@ p1 <- ggplot(df_plot_1, aes(log(Counts_Reference + 1), log(Counts_Alternative + 
   theme_paper(textsize = 50)
 
 p2 <- ggplot(df_plot_3, aes(log(Counts_Reference + 1), log(Counts_Alternative + 1))) + 
-  geom_point(size = 0.5) + 
+  geom_point(size = 4) + 
   xlim(0, 4) + ylim(0, 4) + 
-  coord_fixed() + 
   theme_classic() + 
   annotate("text", label = "CAST (F0)", 
            x = 1, y = 3.9, size = 15) + 
@@ -849,9 +902,8 @@ p2 <- ggplot(df_plot_3, aes(log(Counts_Reference + 1), log(Counts_Alternative + 
   theme_paper(textsize = 50)
 
 p3 <- ggplot(df_plot_5, aes(log(Counts_Reference + 1), log(Counts_Alternative + 1))) + 
-  geom_point(size = 0.5) + 
+  geom_point(size = 4) + 
   xlim(0, 4) + ylim(0, 4) + 
-  coord_fixed() + 
   theme_classic() + 
   annotate("text", label = "B6 x CAST (F1)", 
            x = 1.4, y = 3.9, size = 15) + 
@@ -859,16 +911,16 @@ p3 <- ggplot(df_plot_5, aes(log(Counts_Reference + 1), log(Counts_Alternative + 
   ylab("log( counts CAST + 1)") + 
   theme_paper(textsize = 50)
 
-ggsave("./Plots/FigureS1/FigS1_8a.pdf", p1)
-ggsave("./Plots/FigureS1/FigS1_8b.pdf", p2)
-ggsave("./Plots/FigureS1/FigS1_8c.pdf", p3)
+ggsave("./Plots/FigureS1/FigS1_8a.pdf", p1, width = 10, height = 10)
+ggsave("./Plots/FigureS1/FigS1_8b.pdf", p2, width = 10, height = 10)
+ggsave("./Plots/FigureS1/FigS1_8c.pdf", p3, width = 10, height = 10)
 
-# Look at ratios per cell type
+# Look at ratios per cell type on one chromosome -- show that recombination doesnt induce strong overdispersion
 
-sce.merged.cut <- sce.merged[!grepl("^mt-", rownames(sce.merged)), ]
-sce.merged.cut <- sce.merged[!rowData(sce.merged)$chromosome_name %in% c("MT"), ]
+sce.merged.cut <- sce.merged[!is.na(rowData(sce.merged)$chromosome_name), ]
+sce.merged.cut <- sce.merged.cut[rowData(sce.merged.cut)$chromosome_name == "1", ]
 
-df_total_counts_f1 <- data.frame(
+df_total_counts_f1_chr1 <- data.frame(
   Library = sce.merged.cut$Library, 
   CellType = factor(sce.merged.cut$CellType, levels = c("SG", "SC", "RS", "ES", "Sertoli", "Leydig", "Immune")), 
   Counts_Ref = colSums(counts_reference(sce.merged.cut)), 
@@ -877,19 +929,33 @@ df_total_counts_f1 <- data.frame(
   dplyr::filter(Library %in% c("Sample5", "Sample6")) %>%
   add_column(ratio = .$Counts_Ref / (.$Counts_Ref + .$Counts_Alt))
 
-ggplot(df_total_counts_f1, aes(x = CellType, y = ratio)) + 
-  geom_boxplot() + 
-  ylab("B6 / (B6 + CAST)") + 
-  annotate("text", label = "Allelic ratios per cell", 
-           x = 2, y = 0.95, size = 10) + 
-  xlab("") + 
-  theme_classic() + 
-  theme(axis.text.x = element_text(angle = 45, hjust=1)) + 
-  geom_hline(yintercept = 0.5, linetype = "dashed") + 
-  ylim(0, 1) + 
-  theme_paper(textsize = 50)
+sce.merged.cut <- sce.merged[!is.na(rowData(sce.merged)$chromosome_name), ]
+sce.merged.cut <- sce.merged.cut[rowData(sce.merged.cut)$chromosome_name == "19", ]
 
-ggsave("./Plots/FigureS1/FigS1_9.pdf")
+df_total_counts_f1_chr19 <- data.frame(
+  Library = sce.merged.cut$Library, 
+  CellType = factor(sce.merged.cut$CellType, levels = c("SG", "SC", "RS", "ES", "Sertoli", "Leydig", "Immune")), 
+  Counts_Ref = colSums(counts_reference(sce.merged.cut)), 
+  Counts_Alt = colSums(counts_alternative(sce.merged.cut))
+) %>% 
+  dplyr::filter(Library %in% c("Sample5", "Sample6")) %>%
+  add_column(ratio = .$Counts_Ref / (.$Counts_Ref + .$Counts_Alt))
+
+rbind(cbind(df_total_counts_f1_chr1, "Chromosome" = "Chr1"), 
+      cbind(df_total_counts_f1_chr19, "Chromosome" = "Chr19")) %>%
+  ggplot(aes(x = CellType, y = ratio, fill = Chromosome)) + 
+    geom_violin() + 
+    geom_boxplot(position = position_dodge(width = 0.9), width = 0.2, outlier.color = NA) + 
+    ylab("B6 / (B6 + CAST)") + 
+    annotate("text", label = "Allelic ratios per cell", 
+             x = 2.3, y = 1.05, size = 15) + 
+    xlab("") + 
+    theme_classic() + 
+    theme(axis.text.x = element_text(angle = 45, hjust=1)) + 
+    geom_hline(yintercept = 0.5, linetype = "dashed") + scale_fill_manual(values = c("white", "darkgrey")) + 
+    theme_paper(textsize = 50) + theme(legend.position = "top")
+
+ggsave("./Plots/FigureS1/FigS1_9.pdf", height = 10, width = 10)
 
 ## goncalves fitting
 # analysis of goncalves fitting procedure
@@ -956,27 +1022,27 @@ ggsave("./Plots/FigureS1/FigS1_10a.pdf", width = 8, height = 12)
 # do the same thing only on strong effects
 # get likelihood ratios (-LL_alt - (-LL_hyp))
 
-fits_bulk$bf_cis <- fits_bulk$LL.conserved - fits_bulk$LL.cis
-fits_bulk$bf_trans <- fits_bulk$LL.conserved - fits_bulk$LL.trans
-fits_bulk$bf_cis_trans <- fits_bulk$LL.conserved - fits_bulk$LL.cis_trans
+fits_bulk$bf_cis <- - (fits_bulk$LL.conserved - fits_bulk$LL.cis)
+fits_bulk$bf_trans <- - (fits_bulk$LL.conserved - fits_bulk$LL.trans)
+fits_bulk$bf_cis_trans <- -(fits_bulk$LL.conserved - fits_bulk$LL.cis_trans)
 fits_bulk$combined_bf <- apply(fits_bulk[,c("bf_cis", "bf_trans", "bf_cis_trans")], 1, function(x){max(x)})
 
-fits_sc$bf_cis <- fits_sc$LL.conserved - fits_sc$LL.cis
-fits_sc$bf_trans <- fits_sc$LL.conserved - fits_sc$LL.trans
-fits_sc$bf_cis_trans <- fits_sc$LL.conserved - fits_sc$LL.cis_trans
+fits_sc$bf_cis <- -(fits_sc$LL.conserved - fits_sc$LL.cis)
+fits_sc$bf_trans <- -(fits_sc$LL.conserved - fits_sc$LL.trans)
+fits_sc$bf_cis_trans <- -(fits_sc$LL.conserved - fits_sc$LL.cis_trans)
 fits_sc$combined_bf <- apply(fits_sc[,c("bf_cis", "bf_trans", "bf_cis_trans")], 1, function(x){max(x)})
 
-fits_rs$bf_cis <- fits_rs$LL.conserved - fits_rs$LL.cis
-fits_rs$bf_trans <- fits_rs$LL.conserved - fits_rs$LL.trans
-fits_rs$bf_cis_trans <- fits_rs$LL.conserved - fits_rs$LL.cis_trans
+fits_rs$bf_cis <- -(fits_rs$LL.conserved - fits_rs$LL.cis)
+fits_rs$bf_trans <- -(fits_rs$LL.conserved - fits_rs$LL.trans)
+fits_rs$bf_cis_trans <- -(fits_rs$LL.conserved - fits_rs$LL.cis_trans)
 fits_rs$combined_bf <- apply(fits_rs[,c("bf_cis", "bf_trans", "bf_cis_trans")], 1, function(x){max(x)})
 
-fits_es$bf_cis <- fits_es$LL.conserved - fits_es$LL.cis
-fits_es$bf_trans <- fits_es$LL.conserved - fits_es$LL.trans
-fits_es$bf_cis_trans <- fits_es$LL.conserved - fits_es$LL.cis_trans
+fits_es$bf_cis <- -(fits_es$LL.conserved - fits_es$LL.cis)
+fits_es$bf_trans <- -(fits_es$LL.conserved - fits_es$LL.trans)
+fits_es$bf_cis_trans <- -(fits_es$LL.conserved - fits_es$LL.cis_trans)
 fits_es$combined_bf <- apply(fits_es[,c("bf_cis", "bf_trans", "bf_cis_trans")], 1, function(x){max(x)})
 
-bf_cutoff <- 10
+bf_cutoff <- 4
 effects_combined_strict <- effects_combined[,1:5]
 
 effects_combined_strict[fits_bulk$combined_bf < bf_cutoff, ]$cat_bulk <- "conserved"
@@ -1004,7 +1070,7 @@ rbind(
   theme_paper(textsize = 40) + theme(legend.position = "None") + 
   annotate(geom = "text", x = c(1, 2), y = 1000, label = "with \n effect", size = 14) +
   annotate(geom = "text", x = c(1, 2), y = 4000, label = "without \n effect", size = 14) + 
-  xlab("") + ylab("Number of genes") + ggtitle("Effects with LLR > 10")
+  xlab("") + ylab("Number of genes") + ggtitle("Effects with LLR > 4")
 ggsave("./Plots/FigureS1/FigS1_10b.pdf", width = 8, height = 12)
 
 effect_counts_bulk <- table(effects_combined_strict$cat_bulk)
@@ -1017,33 +1083,97 @@ sum(effect_counts_sc) - effect_counts_sc[["conserved"]]
 sum(effect_counts_rs) - effect_counts_rs[["conserved"]]
 sum(effect_counts_es) - effect_counts_es[["conserved"]]
 
-# finally look at changes between the bayes factors for individual models
+# finally look at changes between the likelihood ratios for individual models
 
 full_df <- rbind(
   cbind(fits_sc, CellType = "SC"), 
   cbind(fits_rs, CellType = "RS"), 
   cbind(fits_es, CellType = "ES")
 )
-full_df <- full_df[,c("Gene", "Category", "bf_cis", "bf_trans", "bf_cis_trans", "CellType")]
+full_df <- full_df[,c("Gene", "CategoryNew", "bf_cis", "bf_trans", "bf_cis_trans", "CellType")]
 
 full_df %>% dplyr::select(Gene, Category, bf_cis, CellType) %>%
   pivot_wider(names_from = CellType, values_from = bf_cis) %>%
-  ggplot(aes(SC, RS)) + geom_point() + geom_abline() + 
-  theme_classic() + geom_vline(xintercept = 10, linetype = "dashed") + geom_hline(yintercept = 10, linetype = "dashed") + 
-  xlim(0, 100) + ylim(0, 100) + ggtitle("Comparison of cis effects") + 
-  theme_paper(textsize = 40) + 
-  xlab("Likelihood ratio (Spermatocytes)") + 
+  ggplot(aes(SC, RS)) + geom_point() + geom_abline() +
+  theme_classic() + geom_vline(xintercept = 10, linetype = "dashed") + geom_hline(yintercept = 10, linetype = "dashed") +
+  xlim(0, 100) + ylim(0, 100) + ggtitle("Comparison of cis effects") +
+  theme_paper(textsize = 40) +
+  xlab("Likelihood ratio (Spermatocytes)") +
   ylab("Likelihood ratio (Round Spermatids)")
 ggsave("./Plots/FigureS1/FigS1_11a.pdf")
 
 full_df %>% dplyr::select(Gene, Category, bf_trans, CellType) %>%
   pivot_wider(names_from = CellType, values_from = bf_trans) %>%
-  ggplot(aes(SC, RS)) + geom_point() + geom_abline() + 
-  theme_classic() + geom_vline(xintercept = 10, linetype = "dashed") + geom_hline(yintercept = 10, linetype = "dashed") + 
-  xlim(0, 100) + ylim(0, 100) + ggtitle("Comparison of trans effects") + 
-  theme_paper(textsize = 40) + 
-  xlab("Likelihood ratio (Spermatocytes)") + 
+  ggplot(aes(SC, RS)) + geom_point() + geom_abline() +
+  theme_classic() + geom_vline(xintercept = 10, linetype = "dashed") + geom_hline(yintercept = 10, linetype = "dashed") +
+  xlim(0, 25) + ylim(0, 25) +
+  ggtitle("Comparison of trans effects") +
+  theme_paper(textsize = 40) +
+  xlab("Likelihood ratio (Spermatocytes)") +
   ylab("Likelihood ratio (Round Spermatids)")
 ggsave("./Plots/FigureS1/FigS1_11b.pdf")
+
+# Check how many genes switch categories: 
+# Argument one: 
+# Some genes are conserved in some cell types, but not in others: 
+
+full_df %>%
+  group_by(Gene) %>%
+  summarize(only_conserved = all(CategoryNew == "conserved"), unconserved_same = length(unique(CategoryNew)) == 1 & unique(CategoryNew)[[1]] != "conserved") -> df_test
+
+genes_in <- names(table(full_df$Gene)[table(full_df$Gene)==3])
+full_df %>%
+  mutate(CategoryNew = gsub("_", "and", CategoryNew)) %>%
+  mutate(CategoryNew = factor(CategoryNew, levels = c("conserved", "cis", "trans", "cisandtrans"))) %>%
+  # dplyr::filter(Gene %in% genes_in) %>%
+  group_by(Gene) %>%
+  summarize(Cat = paste0(sort(unique(CategoryNew)), collapse = "-"), 
+            OnlyConserved = length(unique(CategoryNew)) == 1 & unique(CategoryNew)[[1]] == "conserved",
+            OnlyEffect = length(unique(CategoryNew)) == 1 & unique(CategoryNew)[[1]] != "conserved",
+            ConservedOrEffect = length(unique(CategoryNew)) == 2 & "conserved" %in% unique(CategoryNew),  
+            DifferentEffect = ("cis" %in% CategoryNew & "trans" %in% CategoryNew) | 
+                              ("cis" %in% CategoryNew & "cisandtrans" %in% CategoryNew) | 
+                              ("trans" %in% CategoryNew & "cisandtrans" %in% CategoryNew) ) %>% 
+  pivot_longer(-c("Gene", "Cat")) %>%
+  mutate(name = factor(name, levels = c("OnlyConserved", "ConservedOrEffect", "OnlyEffect", "DifferentEffect"))) %>%
+  dplyr::filter(value) -> df_test_here
+
+testytest <- c("conserved", 
+                paste0("conserved-", c("cis", "trans", "cisandtrans")),
+                "cis", "trans", "cisandtrans", 
+                paste0("conserved", c("cis-trans", "cis-cisandtrans", "trans-cisandtrans", "cis-trans-cisandtrans")), 
+                "cis-trans", "cis-cisandtrans", "trans-cisandtrans", "cis-trans-cisandtrans"
+                )
+
+percent_only_conserved <- round(c(table(df_test_here$name) / sum(table(df_test_here$name)))[[1]], digits = 2) * 100
+percent_conserved_or_effect <- round(c(table(df_test_here$name) / sum(table(df_test_here$name)))[[2]], digits = 2) * 100
+percent_only_effect <- round(c(table(df_test_here$name) / sum(table(df_test_here$name)))[[3]], digits = 2) * 100
+percent_different_effect <- round(c(table(df_test_here$name) / sum(table(df_test_here$name)))[[4]], digits = 2) * 100
+
+df_test_here %>%
+  mutate(Cat = factor(Cat, levels = c("conserved", 
+                                      paste0("conserved-", c("cis", "trans", "cisandtrans")),
+                                      "cis", "trans", "cisandtrans", 
+                                      paste0("conserved-", c("cis-trans", "cis-cisandtrans", "trans-cisandtrans", "cis-trans-cisandtrans")), 
+                                      "cis-trans", "cis-cisandtrans", "trans-cisandtrans", "cis-trans-cisandtrans"
+                                      ))) %>%
+  ggplot(aes(x=Cat, fill = name)) +
+    geom_bar(col = "black") +
+    ggupset::axis_combmatrix(levels = c("conserved", "cis", "trans", "cisandtrans")) +
+    theme_paper(textsize = 40) + scale_y_continuous(expand = c(0, 0), limits = c(0, 2500)) + ylab("Number of Genes") + 
+    scale_fill_manual(values = c("black", "darkgrey", "pink", "red"), 
+                      labels = c("Always conserved", "Conserved or single effect", "Always same effect", "Different Effects")) + 
+    labs(fill = "Genetic effect category \n across cell types") + xlab("") +
+    theme(axis.text.x = element_text(size = 30)) + 
+    annotate(geom = "text", x = 1, y = 2400, label = paste0(percent_only_conserved, "%"), col = "black", size = 7) + 
+    annotate(geom = "text", x = 3, y = 2400, label = paste0(percent_conserved_or_effect, "%"), col = "darkgrey", size = 7) + 
+    annotate(geom = "text", x = 6, y = 2400, label = paste0(percent_only_effect, "%"), col = "pink", size = 7) + 
+    annotate(geom = "text", x = 11, y = 2400, label = paste0(percent_different_effect, "%"), col = "red", size = 7) + 
+    annotate(geom = "segment", x = 0.45, xend = 1.45, y = 2300, yend = 2300, col = "black", size = 2) + 
+    annotate(geom = "segment", x = 1.55, xend = 4.45, y = 2300, yend = 2300, col = "darkgrey", size = 2)  + 
+    annotate(geom = "segment", x = 4.55, xend = 7.45, y = 2300, yend = 2300, col = "pink", size = 2)  + 
+    annotate(geom = "segment", x = 7.55, xend = 14.45, y = 2300, yend = 2300, col = "red", size = 2) -> p_test
+
+ggsave("./Plots/FigureS1/FigS1_12.pdf", p_test)
 
 ```

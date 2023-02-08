@@ -40,7 +40,6 @@ add_empty_rows <- function(data, vector){
   # }))
   #dd
 }
-
 make_ase_sce <- function(sce_full, data_reference, data_alternative){
   colnames(sce_full) <- sce_full$Barcode
   measured.genes = union(rownames(data_reference), 

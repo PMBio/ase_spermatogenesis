@@ -1,7 +1,7 @@
 # This script collects the features for the random forest analysis in Figure 2
 
 library(GenomeInfoDb)
-setwd("~/Desktop/Projects/ASE_Spermatogenesis_Paper_rerun/")
+setwd("~/Desktop/Projects/ASE_Spermatogenesis_Paper_rerun_Revisions/")
 
 genes_test <- readRDS("./Data/processed/genes_test.rds")
 genes_test_vector <- rownames(genes_test)
@@ -67,10 +67,10 @@ VAR_expression_variability_post_celltype <- get_loess_residuals(VAR_expression_l
 
 # house keeping genes
 convertHumanGeneList <- function(x){
-  require("biomaRt")
-  human = useMart("ensembl", dataset = "hsapiens_gene_ensembl")
-  mouse = useMart("ensembl", dataset = "mmusculus_gene_ensembl")
-  genesV2 = getLDS(attributes = c("hgnc_symbol"), filters = "hgnc_symbol", values = x , mart = human, 
+  library("biomaRt")
+  human <- useMart("ensembl", dataset = "hsapiens_gene_ensembl", host = "https://dec2021.archive.ensembl.org/") 
+  mouse <- useMart("ensembl", dataset = "mmusculus_gene_ensembl", host = "https://dec2021.archive.ensembl.org/")
+  genesV2 = getLDS(attributes = c("hgnc_symbol"), filters = "hgnc_symbol", values = x , mart = human,
                    attributesL = c("mgi_symbol"), martL = mouse, uniqueRows = T)
   humanx <- unique(genesV2[, 2])
   return(humanx)
@@ -93,7 +93,7 @@ tata.data$gene <- gsub("_.*$", "", tata.data$V4)
 VAR_promoter_hasTATA <- rownames(genes_test) %in% tata.data$gene
 VAR_promoter_hasTATA[!rownames(genes_test) %in% all_genes_promoter] <- NA
 
-inr.data <- read.table("./Data/processed/classifier/mouse_epdnew_7Qe23.INR.bed", sep = "\t")
+inr.data <- read.table("./Data/processed/classifier/Promoter_features/mouse_epdnew_7Qe23.INR.bed", sep = "\t")
 inr.data$gene <- gsub("_.*$", "", inr.data$V4)
 
 VAR_promoter_hasINR <- rownames(genes_test) %in% inr.data$gene
@@ -219,17 +219,17 @@ VAR_structural_threeUTRlength <- three_utr_lengths[genes_test_vector, ]
 library(TxDb.Mmusculus.UCSC.mm10.knownGene)
 library(AnnotationHub)
 
-hub <- AnnotationHub()
-cpgs <- query(hub, c("mm10"))
-cpgs <- hub[["AH5086"]]
+# hgdownload.cse.ucsc.edu/goldenPath/mm10/database/cpgIslandExt.txt.gz
+#cpgs <- read_delim("~/Downloads/cpgIslandExt(1).txt.gz", delim  = "\t", col_names = c("Number", "Chromosome", "Start", "End", "Annotation", "NA", "NA", "NA", "NA", "NA", "NA", "NA"))
+#cpgs <- makeGRangesFromDataFrame(cpgs)
 
-promoters_genes <- promoters(TxDb.Mmusculus.UCSC.mm10.knownGene, upstream = 500, downstream = 100)
-subsetByOverlaps(promoters_genes, cpgs)
-
-## CTCF binding sites
-hub <- AnnotationHub()
-ctcf_sites <- query(hub, c("CTCF_mm10"))
-ctcf_sites <- hub["AH95568"]
+# promoters_genes <- promoters(TxDb.Mmusculus.UCSC.mm10.knownGene, upstream = 500, downstream = 100)
+# cpg_promoter_overlaps <- subsetByOverlaps(promoters_genes, cpgs)
+# 
+# ## CTCF binding sites
+# hub <- AnnotationHub()
+# ctcf_sites <- query(hub, c("CTCF_mm10"))
+# ctcf_sites <- hub["AH95568"]
 
 # ---- ## ---- ## ---- ## ---- #  
 # ---- # Evolutionary features
@@ -345,13 +345,13 @@ VAR_evolution_snpdensity_F1_promoter <- compute_snp_density(cons_input$Promoter,
 
 testis_specific_promoter <- readRDS("./Data/processed/classifier/testis_specific_enhancer_active.rds") %>%
   mutate(chr = paste0("chr", chr)) %>% makeGRangesFromDataFrame()
-testis_specific_enhancer_primed <- readRDS("./processed/classifier/testis_specific_enhancer_active.rds") %>%
+testis_specific_enhancer_primed <- readRDS("./Data/processed/classifier/testis_specific_enhancer_active.rds") %>%
   mutate(chr = paste0("chr", chr)) %>% makeGRangesFromDataFrame()
-testis_specific_enhancer_active <- readRDS("./processed/classifier/testis_specific_enhancer_active.rds") %>%
+testis_specific_enhancer_active <- readRDS("./Data/processed/classifier/testis_specific_enhancer_active.rds") %>%
   mutate(chr = paste0("chr", chr)) %>% makeGRangesFromDataFrame()
-tissue_shared_promoter <- readRDS("./classifier/tissue_shared_promoter.rds") %>%
+tissue_shared_promoter <- readRDS("./Data/processed/classifier/tissue_shared_promoter.rds") %>%
   mutate(chr = paste0("chr", chr)) %>% makeGRangesFromDataFrame()
-tissue_shared_enhancer_primed <- readRDS("./classifier/tissue_shared_promoter.rds") %>%
+tissue_shared_enhancer_primed <- readRDS("./Data/processed/classifier/tissue_shared_promoter.rds") %>%
   mutate(chr = paste0("chr", chr)) %>% makeGRangesFromDataFrame()
 tissue_shared_enhancer_active <- readRDS("./Data/processed/classifier/tissue_shared_promoter.rds") %>%
   mutate(chr = paste0("chr", chr)) %>% makeGRangesFromDataFrame()

@@ -36,7 +36,7 @@ library(zoo)
 library(tidyverse)
 source("~/Desktop/PhD/RCode/Multipurpose/auxiliary.R")
 
-setwd("~/Desktop/Projects/ASE_Spermatogenesis_Paper_rerun/")
+setwd("~/Desktop/Projects/ASE_Spermatogenesis_Paper_rerun_Revisions//")
 
 data_use <- readRDS("./Data/processed/sce_merged_new.rds")
 data_use <- annotate_chromosome_sce(data_use)
@@ -165,7 +165,6 @@ run_coreg_gp_python_expressed_intervals_new <- function(gene){
   }, error=function(cond) {
     return(NA)
   })
-  
 }
 
 genes_test_here <- genes_use
@@ -178,7 +177,7 @@ names(results_per_gene_expressed_intervals) <- genes_test_here
 
 saveRDS(results_per_gene_expressed_intervals, "./Data/processed/gp_fits_DE_new.rds")
 
-results_per_gene_expressed_intervals <- readRDS("~/Desktop/Projects/ASE_Spermatogenesis_Paper/Data/processed/gp_fits_DE_new.rds")
+results_per_gene_expressed_intervals <- readRDS("~/Desktop/Projects/ASE_Spermatogenesis_Paper_rerun_Revisions//Data/processed/gp_fits_DE_new.rds")
 results_per_gene_expressed_intervals <- results_per_gene_expressed_intervals[!unlist(lapply(results_per_gene_expressed_intervals, function(x){any(is.na(x))}))]
 
 likelihood_df <- data.frame(

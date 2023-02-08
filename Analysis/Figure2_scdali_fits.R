@@ -1,5 +1,5 @@
 ### Load libraries
-setwd("~/Desktop/PhD/Projects/ASE_Spermatogenesis_Paper_rerun//")
+setwd("~/Desktop/PhD/Projects/ASE_Spermatogenesis_Paper_rerun_Revisions/")
 
 library(scran)
 library(scater)
@@ -213,50 +213,50 @@ data_test_alt <- counts_alternative(data_f1[genes_test,])
 
 ## here we actually run the tests - comment out if needed
 #run beta-binomial test to detect genes with persistent ASE
-llr_pvals <- data.frame(do.call("rbind", lapply(genes_test, function(gene){
- print(gene)
- a = data_test_ref[gene,]
- d = data_test_alt[gene,] + data_test_ref[gene,]
- pval = test_mean_R(a, d)
- return(pval)
-})))
+# llr_pvals <- data.frame(do.call("rbind", lapply(genes_test, function(gene){
+#  print(gene)
+#  a = data_test_ref[gene,]
+#  d = data_test_alt[gene,] + data_test_ref[gene,]
+#  pval = test_mean_R(a, d)
+#  return(pval)
+# })))
 
-rownames(llr_pvals) <- genes_test
-summary_data_meanTest <- cbind(summary_data[genes_test,], llr_pvals[genes_test, ])
-summary_data_meanTest[is.na(summary_data_meanTest$pval),]$pval <- 1
-summary_data_meanTest$padj <- p.adjust(summary_data_meanTest$pval)
-summary_data_meanTest$ase <- summary_data_meanTest$coverage_ref /
- (summary_data_meanTest$coverage_alt + summary_data_meanTest$coverage_ref)
+# rownames(llr_pvals) <- genes_test
+# summary_data_meanTest <- cbind(summary_data[genes_test,], llr_pvals[genes_test, ])
+# summary_data_meanTest[is.na(summary_data_meanTest$pval),]$pval <- 1
+# summary_data_meanTest$padj <- p.adjust(summary_data_meanTest$pval)
+# summary_data_meanTest$ase <- summary_data_meanTest$coverage_ref /
+#  (summary_data_meanTest$coverage_alt + summary_data_meanTest$coverage_ref)
 
 ## find mapping effects
-data_parental <- readRDS("./Data/processed/sce_merged_new.rds")
-data_f1 <- annotate_chromosome_sce(data_f1)
-av.counts.b6 <- rowSums(counts(data_parental[,data_parental$Library %in% c("Sample1", "Sample2")]))
-av.counts.cast <- rowSums(counts(data_parental[,data_parental$Library %in% c("Sample3", "Sample4")]))
-sfs <- c(sum(av.counts.b6), sum(av.counts.cast)) / sum(av.counts.b6)
+# data_parental <- readRDS("./Data/processed/sce_merged_new.rds")
+# data_f1 <- annotate_chromosome_sce(data_f1)
+# av.counts.b6 <- rowSums(counts(data_parental[,data_parental$Library %in% c("Sample1", "Sample2")]))
+# av.counts.cast <- rowSums(counts(data_parental[,data_parental$Library %in% c("Sample3", "Sample4")]))
+# sfs <- c(sum(av.counts.b6), sum(av.counts.cast)) / sum(av.counts.b6)
+# 
+# summary_parental <- data.frame(
+#   CountsB6 = av.counts.b6 / sfs[[1]],
+#   CountsCast = av.counts.cast / sfs[[2]],
+#   LogFC = log(av.counts.b6 + 1) - log(av.counts.cast + 1)
+# )
+# 
+# summary_parental <- summary_parental[rownames(summary_data_meanTest),]
+# summary_parental$LogFC_filial <- log(summary_data_meanTest$coverage_ref + 1) - log(summary_data_meanTest$coverage_alt + 1)
+# summary_parental$Chromosome <- rowData(data_f1)[rownames(summary_parental),]$chromosome_name
+# summary_parental$Chromosome_X_MT <- summary_parental$Chromosome %in% c("X", "MT")
+# 
+# FC_cutoff <- 8
+# df_genes_show <- summary_parental[(abs(summary_parental$LogFC) > FC_cutoff |
+#                                      abs(summary_parental$LogFC_filial) > FC_cutoff),]
+# 
+# genes_exclude <- abs(summary_parental$LogFC) < 1.5 & summary_parental$LogFC_filial < -3
+# 
+# summary_data_meanTest$Mapping_effect <- genes_exclude
 
-summary_parental <- data.frame(
-  CountsB6 = av.counts.b6 / sfs[[1]],
-  CountsCast = av.counts.cast / sfs[[2]],
-  LogFC = log(av.counts.b6 + 1) - log(av.counts.cast + 1)
-)
+#saveRDS(summary_data_meanTest, "./Data/processed/Dali_LRT_calls.csv")
 
-summary_parental <- summary_parental[rownames(summary_data_meanTest),]
-summary_parental$LogFC_filial <- log(summary_data_meanTest$coverage_ref + 1) - log(summary_data_meanTest$coverage_alt + 1)
-summary_parental$Chromosome <- rowData(data_f1)[rownames(summary_parental),]$chromosome_name
-summary_parental$Chromosome_X_MT <- summary_parental$Chromosome %in% c("X", "MT")
-
-FC_cutoff <- 8
-df_genes_show <- summary_parental[(abs(summary_parental$LogFC) > FC_cutoff |
-                                     abs(summary_parental$LogFC_filial) > FC_cutoff),]
-
-genes_exclude <- abs(summary_parental$LogFC) < 1.5 & summary_parental$LogFC_filial < -3
-
-summary_data_meanTest$Mapping_effect <- genes_exclude
-
-saveRDS(summary_data_meanTest, "./Data/processed//Dali_LRT_calls.csv")
-
-summary_data_meanTest <- readRDS("./Data/processed//Dali_LRT_calls.csv")
+summary_data_meanTest <- readRDS("./Data/processed/Dali_LRT_calls.csv")
 summary_data_meanTest$Mean <- unlist(summary_data_meanTest$Mean)
 summary_data_meanTest$Theta <- unlist(summary_data_meanTest$Theta)
 summary_data_meanTest$NLL_null <- unlist(summary_data_meanTest$NLL_null)
@@ -274,8 +274,8 @@ D <- t(counts_reference(data_f1[rownames(genes.test),]) +
        counts_alternative(data_f1[rownames(genes.test),]))
 pseudotime <- data_f1$Pseudotime
 
-results_linear_kernel <- test_regions_R(A, D, pseudotime, n_cores = 4L)
-saveRDS(results_linear_kernel, "./Data/processed/Dali_scoreTest_linear.csv")
+# results_linear_kernel <- test_regions_R(A, D, pseudotime, n_cores = 4L)
+# saveRDS(results_linear_kernel, "./Data/processed/Dali_scoreTest_linear.csv")
 results_linear_kernel <- readRDS("./Data/processed/Dali_scoreTest_linear.csv")
 
 genes.test$dali_pval_linear <- results_linear_kernel
@@ -294,9 +294,9 @@ make_onehot_cluster <- function(clusters){
 
 cluster_kernel <- make_onehot_cluster(data_f1$CellType)
 
-results_cluster_kernel <- test_regions_R(A, D, cluster_kernel, n_cores = 4L)
-names(results_cluster_kernel) <- rownames(genes.test)
-saveRDS(results_cluster_kernel, "./Data/processed/Dali_scoreTest_discrete.csv")
+# results_cluster_kernel <- test_regions_R(A, D, cluster_kernel, n_cores = 4L)
+# names(results_cluster_kernel) <- rownames(genes.test)
+# saveRDS(results_cluster_kernel, "./Data/processed/Dali_scoreTest_discrete.csv")
 
 make_polynomial_kernel <- function(cell_state, degree = 1){
   cell_state = cell_state / max(cell_state)
@@ -305,22 +305,26 @@ make_polynomial_kernel <- function(cell_state, degree = 1){
   })))
 }
 
-pseudotime_polynomial <- make_polynomial_kernel(pseudotime, degree = 3)
+# 
+# pseudotime_polynomial <- make_polynomial_kernel(pseudotime, degree = 3)
 
-results_polynomial_kernel <- test_regions_R(A, D, pseudotime_polynomial)
-saveRDS(results_polynomial_kernel, "./Data/processed/Dali_scoreTest_poly.csv")
-names(results_polynomial_kernel) <- colnames(A)
+# results_polynomial_kernel <- test_regions_R(A, D, pseudotime_polynomial)
+# saveRDS(results_polynomial_kernel, "./Data/processed/Dali_scoreTest_poly.csv")
+# names(results_polynomial_kernel) <- colnames(A)
 
-results_polynomial_kernel <- readRDS("./Data/processed/Dali_scoreTest_poly.csv")
-results_polynomial_kernel[is.na(results_polynomial_kernel)] <- 1
-genes.test$dali_pval_polynomial <- results_polynomial_kernel
+#results_polynomial_kernel <- readRDS("./Data/processed/Dali_scoreTest_poly.csv")
+#results_polynomial_kernel[is.na(results_polynomial_kernel)] <- 1
+#genes.test$dali_pval_polynomial <- results_polynomial_kernel
 
-saveRDS(genes.test, "./Data/processed/Dali_full_results.rds")
+#saveRDS(genes.test, "./Data/processed/Dali_full_results.rds")
+
+genes.test <- readRDS("./Data/processed/Dali_full_results.rds")
 
 ### ------ downstream analysis --------------------------
 ### calculate smoothed profiles for each significant gene
 
 genes_sig <- rownames(genes.test[p.adjust(genes.test$dali_pval_polynomial) < 0.01,])
+genes_sig <- rownames(genes.test)
 
 A_here <- A[, genes_sig]
 D_here <- D[, genes_sig]
@@ -350,7 +354,10 @@ gp_results_total <- lapply((1:ncol(A_here)), function(i){
   })
 })
 
+saveRDS(gp_results_total, "./Data/processed/GP_fits_all.rds")
 saveRDS(gp_results_total, "./Data/processed/GP_fits.rds")
+
+gp_results_total <- readRDS("./Data/processed/GP_fits.rds")
 
 
 

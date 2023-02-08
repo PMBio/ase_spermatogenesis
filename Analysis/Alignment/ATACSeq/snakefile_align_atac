@@ -1,0 +1,240 @@
+#!/bin/python 
+
+# Run: ~/to_omics/Standalone_Software/miniconda3/envs/snakemake/bin/snakemake -s ./scripts/snakefile_align_atac
+# --cluster "bsub -n16 -q verylong -R rusage[mem=200GB]" -j30 --use-envmodules -n
+
+# ATAC-Seq preprocessing pipeline
+# This pipeline takes all the sames in a directory (from gpcf output) and processes one sample by one, 
+# currently there is no option to merge samples
+# Overview:
+# Trim adapters: Remove nextera adapters
+# Alignment: Align samples to genome
+# Remove duplicates
+# Process Bam: sort, convert to bam, index and apply ATAC-specific filters (mitochondrial genome, >2kb insert size)
+# Generate insert size distributions
+# Generate TSS enrichment distribution
+# Peak calling
+# Allele-specific analysis:
+# Add SNP information to bam file
+# perform WASP-remapping 
+#t generate allele-specific bam files to plot tracks off
+
+# downstream analysis in R includes merging peak sets, annotating peaks and quantifying total + allelic counts
+
+### at the end, link everything to one place
+import pandas as pd
+import numpy as np
+import os
+import pdb 
+from glob import glob
+
+# SET GLOBAL VARIABLES
+# CONDA PYTHON
+CONDA_PYTHON = "~/to_omics/Standalone_Software/miniconda3/bin/python"
+ALLELIC_COUNTING_SCRIPT_BULK="/omics/groups/OE0538/internal/users/panten/projects/Spermatogenesis/BulkATAC/scripts/count_allelic_bulk.py"
+
+# WASP
+WASP_PATH = "/home/panten/to_omics/Standalone_Software/WASP-master/mapping/"
+SNP_DIR = "/omics/groups/OE0538/internal/users/panten/projects/Spermatogenesis/JP_Spermatogenesis2020/misc_files/snp_files/wasp_processed_chr/"
+SNP_VCF_FILE = "/omics/groups/OE0538/internal/users/panten/projects/f1_multiOmics/make_masked_genomes/b6_mask_cast/CAST_EiJ.mgp.v5.snps.dbSNP142.renamed.vcf.gz"
+
+# TRIMMING ADAPTERS
+#ILLUMINA_ADAPTERS="/software/trimmomatic/0.38/adapters/TruSeq2-PE.fa"
+NEXTERA_ADAPTERS="/software/trimmomatic/0.38/adapters/NexteraPE-PE.fa"
+
+# REPLACE THIS WITH MASKED GENOME (or not?)
+GENOME_PATH="/omics/groups/OE0538/internal/users/panten/projects/genome_files/mm10_bowtie/mm10"
+
+# WORKING DIRECTORIES
+parent_dir = "/omics/groups/OE0538/internal/users/panten/projects/Spermatogenesis/BulkATAC/"
+data_dir = "data/220806_VH00211_181_AAC5JH2M5/"
+
+sample_indices = [ f.name for f in os.scandir(data_dir) if f.is_dir() ]
+#sample_indices = sample_indices[0:1]
+print(sample_indices)
+
+all_targets = [data_dir + i + "/peaks/" for i in sample_indices]
+all_targets = [data_dir + i + "/wasp/" + i + ".rmdup.final.bam" for i in sample_indices]
+all_targets = [data_dir + i + "/counts/" + i + "_counts_total.txt.gz" for i in sample_indices]
+
+print(all_targets)
+
+rule all:
+    input:
+        all_targets
+
+
+rule trim_adapters:
+    input: 
+        data_dir + "{sample}/fastq/{sample}_R1.fastq.gz",
+        data_dir + "{sample}/fastq/{sample}_R2.fastq.gz"
+    output:
+        data_dir + "{sample}/fastq/{sample}_R1.trim.fastq.gz",
+        data_dir + "{sample}/fastq/{sample}_R1.trim_unpaired.fastq.gz",
+        data_dir + "{sample}/fastq/{sample}_R2.trim.fastq.gz",
+        data_dir + "{sample}/fastq/{sample}_R2.trim_unpaired.fastq.gz"
+    params:
+        adapters = NEXTERA_ADAPTERS
+    envmodules:
+        "trimmomatic/0.38"
+    shell:
+        """
+           trimmomatic.sh PE -phred33 {input} {output} ILLUMINACLIP:{params.adapters}:2:30:5:8:TRUE
+        """
+
+#rule fastqc_trimmed:
+#    input: 
+#        read1 = data_dir + "{sample}/fastq/{sample}_R1.trim.fastq.gz", 
+#        read2 = data_dir + "{sample}/fastq/{sample}_R2.trim.fastq.gz"
+#    output:
+#        read1 = data_dir + "{sample}/fastq/{sample}_R1.trim.fastqc"
+
+        
+
+rule align_fragments:
+    input: 
+        read1 = data_dir + "{sample}/fastq/{sample}_R1.trim.fastq.gz", 
+        read2 = data_dir + "{sample}/fastq/{sample}_R2.trim.fastq.gz"
+    output:
+        data_dir + "{sample}/aln/{sample}.sam"
+    params:
+        genome = GENOME_PATH
+    envmodules:
+        "bowtie2/2.3.5.1"
+    shell:
+        """
+            bowtie2 -x {params.genome} -1 {input.read1} -2 {input.read2} -S {output}
+            #bowtie2 -very-sensitive -X 2000 -x {params.genome} -1 {input.read1} -2 {input.read2} -S {output}
+        """
+
+rule process_sam:
+    input: data_dir + "{sample}/aln/{sample}.sam"
+    output: data_dir + "{sample}/aln/{sample}.bam"
+    envmodules:
+        "samtools"
+    shell:
+        """
+            samtools view -bS {input} | samtools sort - -o {output}
+            samtools index {output}
+        """
+
+rule deduplicate:
+    input: data_dir + "{sample}/aln/{sample}.bam"
+    output: data_dir + "{sample}/aln/{sample}.rmdup.bam"
+    envmodules:
+        "samtools"
+    shell:
+        """
+            samtools rmdup {input} {output}
+            samtools index {output}
+        """
+
+# WASP remapping
+rule wasp_intersecting_snps:
+    input: data_dir + "{sample}/aln/{sample}.rmdup.bam"
+    output: 
+        data_dir + "{sample}/wasp/{sample}.rmdup.remap.fq1.gz",
+        data_dir + "{sample}/wasp/{sample}.rmdup.remap.fq2.gz",
+    params:
+        snp_dir = SNP_DIR,
+        wasp_intersect_snps_path = WASP_PATH,
+        conda_python = CONDA_PYTHON,
+        output_dir = data_dir + "{sample}/wasp/"
+    envmodules:
+        "bowtie2/2.3.5.1",
+        "samtools"
+    shell:
+        """ 
+            {params.conda_python} {params.wasp_intersect_snps_path}/find_intersecting_snps.py \
+                --is_paired_end \
+                --is_sorted \
+                --output_dir {params.output_dir} \
+                --snp_dir {params.snp_dir} \
+                {input}
+        """
+
+rule wasp_remapping:
+    input: 
+        fq_1 = data_dir + "{sample}/wasp/{sample}.rmdup.remap.fq1.gz",
+        fq_2 = data_dir + "{sample}/wasp/{sample}.rmdup.remap.fq2.gz"
+    output:
+        output_bam = data_dir + "{sample}/wasp/{sample}.rmdup.final.bam"
+    params:
+        snp_dir = SNP_DIR,
+        wasp_intersect_snps_path = WASP_PATH,
+        conda_python = CONDA_PYTHON,
+        genome = GENOME_PATH,
+        output_dir = data_dir + "{sample}/wasp/"
+    envmodules:
+        "bowtie2/2.3.5.1",
+        "samtools"
+    shell:
+        """ 
+            bowtie2 -x {params.genome} -1 {input.fq_1} -2 {input.fq_2} \
+                -S {params.output_dir}/{wildcards.sample}.rmdup.remap.sam 
+                
+            samtools view -b {params.output_dir}/{wildcards.sample}.rmdup.remap.sam > {params.output_dir}/{wildcards.sample}.rmdup.remap.bam
+            samtools sort -o {params.output_dir}/{wildcards.sample}.rmdup.remap.sort.bam {params.output_dir}/{wildcards.sample}.rmdup.remap.bam 
+            samtools index {params.output_dir}/{wildcards.sample}.rmdup.remap.sort.bam 
+
+            {params.conda_python} {params.wasp_intersect_snps_path}/filter_remapped_reads.py \
+                    {params.output_dir}/{wildcards.sample}.rmdup.to.remap.bam \
+                    {params.output_dir}/{wildcards.sample}.rmdup.remap.sort.bam \
+                    {params.output_dir}/{wildcards.sample}.rmdup.final.bam
+        """
+
+rule sort_final_bam:
+    input: data_dir + "{sample}/wasp/{sample}.rmdup.final.bam"
+    output: data_dir + "{sample}/wasp/{sample}.rmdup.final.sort.bam"
+    envmodules:
+        "samtools"
+    shell:
+        """
+            samtools sort -o {output} {input}
+            samtools index {output}
+        """
+
+
+# peak calling per sample
+rule call_peaks:
+    input: data_dir + "{sample}/aln/{sample}.rmdup.bam"
+    output: 
+        out_dir = directory(data_dir + "{sample}/peaks/"),
+        out_narrowpeak = data_dir + "{sample}/peaks/{sample}_peaks.narrowPeak"
+    envmodules:
+        "macs2/2.1.2.1"
+    shell:
+        """
+            macs2 callpeak -t {input} --nomodel --extsize 200 --shift -100 --format BAM --call-summits --outdir  {output.out_dir} -n {wildcards.sample}
+        """
+
+# use scai_utils to count reads
+rule count_reads:
+    input: 
+        data_dir + "{sample}/wasp/{sample}.rmdup.final.sort.bam",
+        data_dir + "{sample}/peaks/{sample}_peaks.narrowPeak"
+    output: 
+        data_dir + "{sample}/counts/{sample}_counts_total.txt.gz"
+    params:
+        counting_script = ALLELIC_COUNTING_SCRIPT_BULK,
+        snp_vcf = SNP_VCF_FILE,
+        conda_python = CONDA_PYTHON,
+        input_dir = data_dir + "{sample}/"
+    shell:
+        """
+        {params.conda_python} {params.counting_script} \
+            --regions {params.input_dir}/peaks/{wildcards.sample}_peaks.narrowPeak \
+            --bam {params.input_dir}/wasp/{wildcards.sample}.rmdup.final.sort.bam \
+            --vcf {params.snp_vcf} \
+            --out_prefix {params.input_dir}/counts/{wildcards.sample}_ \
+            --output_bam
+        """
+# 
+
+# Remove 
+#rule filter_reads:
+#    input: 
+
+#rule make_insertsize_plot:
+
+#rule make_bigwig:
