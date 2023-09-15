@@ -1,0 +1,261 @@
+---
+title: "dynamic_allelic_imbalance"
+author: "Jasper Panten"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+```
+
+```{r load_libraries}
+
+setwd("~/Desktop/Projects/ASE_Spermatogenesis_Paper_rerun_Revisions/Scripts/Demonstrations/")
+
+library(ggplot2)
+library(tidyverse)
+library(viridis)
+source("./functions.R")
+
+```
+
+This script demonstrate the analysis of dynamic trans effects during mouse spermatogenesis in F1 hybrid mice. The F1 model allows to distinguish transcriptional changes between the strains caused by cis-effects and trans-effects, because in the F1 hybrid, all the trans-environment is the same, so all differences are cis-driven, whereas allelic differences between the F0s are driven by cis + trans effects. The trans-effect is therefore the residual between allelic imbalance in F0 and F1. 
+The single-cell resolution of our dataset now allows to discover dynamic trans effects, where this residual varies across differentiation. To this end, we use non-parametric regression models (based on gaussian processes) to discover genes where the two allelic trajectories diverge significantly. We set up different models to distinguish the following cases: 
+- both F0 and F1 follow the same trajectory: there is no trans, but possibly a (dynamic) cis-effect
+- the difference in F0 - F1 trajectories is constant: there is a persistent trans-effect, invariable across differentiation
+- F0 - F1 varies over time: there is a dynamic trans-effect
+
+For this demonstration, we load allele-specific counts for three selected genes in the F0 and F1, which have previously been aggregated across intervals in the pseudotemporal ordering:
+
+```{r load_data}
+
+# # Not run -- subset data on genes to show
+# ratios_all_genes <- readRDS("./normalized_ratios_trans.rds")
+# saveRDS(lapply(ratios_all_genes, function(x){x[c("Dnajc2", "Ddt", "Tex21"), ]}), "./test_ratios_trans.rds")
+# total_exp <- readRDS("../../Data/processed/total_exp.rds")
+# total_exp <- total_exp[c("Dnajc2", "Ddt", "Tex21"), ]
+# saveRDS(total_exp, "./test_counts_trans.rds")
+# list_data <- readRDS("../../Data/processed//binned_data.rds")
+# saveRDS(lapply(list_data, function(x){x[c("Dnajc2", "Ddt", "Tex21"), ]}), "./test_counts_trans_per_sample.rds")
+
+allelic_ratios <- readRDS("./test_ratios_trans.rds")
+total_exp <- readRDS("./test_counts_trans.rds")
+
+list_data <- readRDS("./test_counts_trans_per_sample.rds")
+
+data_f0_b6 <- list_data[[1]]
+data_f0_cast <- list_data[[2]]
+data_f1_b6 <- list_data[[3]]
+data_f1_cast <- list_data[[4]]
+
+```
+
+We use gpflow to set up the different gaussian process models. The different models are encoded by varying mean and covariance functions, and we use the difference in likelihood to the fit data to evaluate the significance of the result (see paper for details):  
+
+```{python asd}
+
+import gpflow
+import numpy as np
+import matplotlib.pyplot as plt
+import tensorflow as tf
+from gpflow.utilities import print_summary, set_trainable, to_default_float
+from gpflow.mean_functions import *
+import matplotlib.pyplot as plt
+import pandas as pd
+
+def plot(m):
+    Xtest = np.linspace(0, 100, 100)[:, None]
+    mu, var = m.predict_f(np.hstack((Xtest, np.zeros_like(Xtest))))
+    out1 = [Xtest, mu.numpy(), var.numpy()]
+    mu, var = m.predict_f(np.hstack((Xtest, np.ones_like(Xtest))))
+    out2 = [Xtest, mu.numpy(), var.numpy()]
+    return([out1, out2])
+
+def fit_vanilla_4(X, Y, model = "trans_dynamic",  n_iterations = 100):
+  #
+  X = np.array(X)
+  Y = np.array(Y)
+  #
+  X = X.astype("float64")
+  Y = Y.astype("float64")
+  #
+  output_dim = 2  # Number of outputs
+  rank = 1  # Rank of W
+  #
+  k = gpflow.kernels.Matern52(active_dims=[0])
+  k_const = gpflow.kernels.Constant(active_dims=[0])
+  #
+  # Coregion kernel
+  coreg = gpflow.kernels.Coregion(output_dim=output_dim, rank=rank, active_dims=[1])
+  if ((model == "conserved") | (model == "cis_static")):
+    kern = k_const * coreg
+  if ((model == "cis_dynamic") | (model == "trans_static") | (model == "trans_dynamic")):
+    kern = k * coreg
+  lik = gpflow.likelihoods.SwitchedLikelihood([gpflow.likelihoods.Gaussian(), gpflow.likelihoods.Gaussian()])
+  #
+  if ((model == "conserved") | (model == "cis_static") | (model == "cis_dynamic")):
+    mean_function = Constant()
+  if ((model == "trans_static") | (model == "trans_dynamic")):
+    mean_function = SwitchedMeanFunction([Constant(), Constant()])
+  m = gpflow.models.VGP((X, Y), kernel=kern, likelihood = lik, mean_function = mean_function)
+  #
+  if ((model == "conserved") | (model == "cis_static") | (model == "cis_dynamic") | ( model == "trans_static")):
+    m.kernel.kernels[1].W.assign(np.array([[1], [1]]))
+    m.kernel.kernels[1].kappa.assign(np.array([0.000001, 0.000001]))
+    set_trainable(m.kernel.kernels[1].kappa, False)
+    set_trainable(m.kernel.kernels[1].W, False)
+  #
+  #
+  if (model == "conserved"):
+    m.mean_function.c.assign([0.5])
+    set_trainable(m.mean_function.c, False)
+  # fit the covariance function parameters
+  gpflow.optimizers.Scipy().minimize(
+    m.training_loss, m.trainable_variables, options=dict(maxiter=n_iterations), method="L-BFGS-B",
+  )
+  predictions = plot(m)
+  covariance = m.kernel.kernels[1].output_covariance().numpy()
+  likelihood = m.maximum_log_likelihood_objective().numpy()
+  return([m, predictions, covariance, likelihood])
+
+
+```
+
+We now fit the different models to the data for each gene. Since we don't account for the binomial noise of the data here, we restrict the analysis to regions of differentiation where the gene is sufficiently expressed: 
+
+```{r asdasdasdasda}
+
+run_coreg_gp <- function(gene, model = "full"){
+  
+  logit <- function(x) {log(x / (1 - x))}
+  
+  rs_f0_noStab <- allelic_ratios[[1]]
+  rs_f1_noStab <- allelic_ratios[[2]]
+  
+  data_plot_ratio <- data.frame(
+    FC_F0 = rs_f0_noStab[gene, ],
+    FC_F1 = rs_f1_noStab[gene, ],
+    Interval = 1:ncol(rs_f0_noStab)
+  )
+  
+  # get intervals in which gene is expressed
+  intervals_test <- total_exp[gene, ] > 0.5
+  
+  print(table(intervals_test))
+  
+  if (sum(intervals_test) < 5){
+    print("Not enough intervals to test")
+    return(list(NA, NA, NA, NA))
+  }
+  
+  data_plot_ratio <- data_plot_ratio[intervals_test, ]
+  
+  x_test <- as.double(data_plot_ratio$Interval)
+  
+  y1_test <- logit(data_plot_ratio$FC_F0)
+  y2_test <- logit(data_plot_ratio$FC_F1)
+  
+  X_augmented = as.matrix(data.frame(c(x_test, x_test), c(rep(0, length(x_test)), rep(1, length(x_test)))))
+  Y_augmented = as.matrix(data.frame(c(y1_test, y2_test), c(rep(0, length(x_test)), rep(1, length(x_test)))))
+  
+  not_exclude <- !is.infinite(Y_augmented[,1])
+  
+  if(sum(!not_exclude) / length(not_exclude) > 0.1){
+    print("Warning: More than 10% of values are NA")
+  }
+  
+  X_augmented_run <- X_augmented[not_exclude, ]
+  Y_augmented_run <- Y_augmented[not_exclude, ]
+  
+  tryCatch({
+    gp_res_parent_constant = py$fit_vanilla_4(X_augmented_run, Y_augmented_run, model = "conserved")
+    gp_res_parent_cis_static = py$fit_vanilla_4(X_augmented_run, Y_augmented_run, model = "cis_static")
+    gp_res_parent_cis_dynamic = py$fit_vanilla_4(X_augmented_run, Y_augmented_run, model = "cis_dynamic")
+    gp_res_parent_trans_static = py$fit_vanilla_4(X_augmented_run, Y_augmented_run, model = "trans_static")
+    gp_res_parent_trans_dynamic = py$fit_vanilla_4(X_augmented_run, Y_augmented_run, model = "trans_dynamic")
+    return(list(gp_res_parent_constant, gp_res_parent_cis_static, gp_res_parent_cis_dynamic, gp_res_parent_trans_static,
+                gp_res_parent_trans_dynamic))
+  }, error=function(cond) {
+    return(NA)
+  })
+}
+
+gp_results <- lapply(rownames(total_exp), run_coreg_gp)
+names(gp_results) <- rownames(total_exp)
+
+```
+
+We can now visualize the results. For, Dnajc2 shows strong divergence in the allelic trajectories later in differentiation, and shows strong evidence for a dynamic trans effect: 
+
+```{r asdas}
+
+plot_cis_trans_gene_mean <- function(gene){
+  
+  rev_logit <- function(x){
+  1 / (1 + exp(-x))
+  }
+  
+  asd <- gp_results[[gene]]
+  
+  for_plotting <- lapply(1:length(asd[[5]][[2]]), function(i){
+    xx = asd[[5]][[2]][[i]]
+    xx = data.frame(do.call("cbind", xx))
+    xx$Sample = i
+    xx$X3 <- sqrt(xx$X3)
+    xx})
+  
+  for_plotting_merged <- do.call("rbind", for_plotting)
+  for_plotting_merged$Sample <- as.factor(for_plotting_merged$Sample)
+  for_plotting_merged$mean <- for_plotting_merged$X2
+
+  data_plot <- data.frame(
+    "F0_P" = data_f0_b6[gene, ],
+    "F0_M" = data_f0_cast[gene, ],
+    "F1_P" = data_f1_b6[gene, ],
+    "F1_M" = data_f1_cast[gene, ]
+  )
+  
+  norm_factors <- c(sum(colSums(data_f0_b6)), 
+                    sum(colSums(data_f0_cast)))
+  norm_factors <- norm_factors / norm_factors[[1]]
+  
+  data_plot[,1:2] <- data.frame(t(t(data_plot[,1:2]) / norm_factors))
+  data_plot$Interval <- 1:nrow(data_plot)
+  for_plotting_merged$Sample <- ifelse(for_plotting_merged$Sample == 1, "F0", "F1")
+  
+  ggplot(for_plotting_merged, aes(X1, y = rev_logit(X2), col = Sample)) + 
+    geom_line(linetype = "dashed", size = 1.5) + 
+    scale_color_manual(values = c("F0" = "black", "F1" = "darkgrey")) + 
+    # geom_ribbon(aes(ymin = rev_logit(error_lower), ymax = rev_logit(error_upper), fill = Sample), 
+    #             alpha = 0.2) + 
+    theme(legend.position="top") + 
+    geom_point(data = data_plot, aes(Interval, (F0_P) / (F0_M + F0_P)), col = "black", size = 2) + 
+    geom_point(data = data_plot, aes(Interval, (F1_P) / (F1_M + F1_P)), col = "darkgrey", size = 2) + 
+    xlim(0, 100) + scale_fill_manual(values = c("red", "darkgrey")) + ylim(c(0, 1)) + xlab("Pseudotime") + 
+    ylab("Allelic Imbalance") + theme_classic() + ggtitle(gene) + 
+    geom_hline(yintercept = 0.5, linetype = "dashed") + 
+    theme(text = element_text(size = 30), legend.position = "None") + 
+    scale_x_continuous(breaks = c(0, 50, 100)) + 
+    scale_y_continuous(breaks = c(0, 0.5, 1), limits = c(0, 1))
+}
+
+plot_cis_trans_gene_mean("Dnajc2")
+gp_results$Dnajc2[[5]][[4]] - gp_results$Dnajc2[[4]][[4]] # high log-likelihood ratio compared to persistent only model
+
+```
+
+Meanwhile, genes like Ddt, which show strong dynamic cis-effects, do not show evidence for trans-effects
+
+```{r asdasdasda}
+
+plot_cis_trans_gene_mean("Ddt")
+gp_results$Ddt[[5]][[4]] - gp_results$Ddt[[4]][[4]] # both models fit equally well
+
+```
+

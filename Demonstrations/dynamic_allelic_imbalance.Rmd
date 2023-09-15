@@ -1,0 +1,114 @@
+---
+title: "dynamic_allelic_imbalance"
+author: "Jasper Panten"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+```
+
+```{r load_libraries}
+
+setwd("~/Desktop/Projects/ASE_Spermatogenesis_Paper_rerun_Revisions/Scripts/Demonstrations/")
+
+library(ggplot2)
+library(tidyverse)
+library(viridis)
+source("./functions.R")
+
+```
+
+This script demonstrate the analysis of dynamic allelic imbalance during mouse spermatogenesis in F1 hybrid mice, crossed between C57BL6 and CAST/EiJ strains. We quantified gene expression using 10x single-cell RNA-Seq in single germ cells, which can be arranged according to their differentiation stage, represented by a pseudotemporal ordering. Finally, we use heterozygous variants within reads to quantify expression from the B6 or CAST haplotypes.
+
+For this demonstration, we load allele-specific counts for two selected genes, including their celltype and pseudotime-annotations: 
+
+```{r load_data}
+
+allelic_counts <- readRDS("./test_counts_allelic.rds")
+
+colour_vector <- c("SG" = "#046735",
+                   "SC" = "#D31281",
+                   "RS" = "#282B69",
+                   "ES" = "grey60")
+
+allelic_counts@colData %>% data.frame() %>%
+  ggplot(aes(x = rank(Pseudotime), y = Pseudotime, col = CellType)) + geom_point() + theme_bw(base_size = 20) + 
+    xlab("Cells ordered by pseudotime") + ylab("Pseudotime") + scale_color_manual(values = colour_vector)
+
+```
+
+We then plot the allelic expression across differentiation, either by plotting the haplotype-specific expression level or the allelic bias B6 / (B6 + CAST), where 0.5 represents equal allelic contribution: 
+
+```{r plot_allelic_counts_ddt}
+
+plot_gene(allelic_counts, "Ddt")
+
+```
+
+In contrast, for most genes there is no obvious difference in allelic ratios over time: 
+
+```{r plot_allelic_counts_tex21}
+
+plot_gene(allelic_counts, "Tex21")
+
+```
+
+The dynamic allelic imbalance arises from genetic effects acting in a celltype-specific manner on gene expression. Since both alleles are measured in the same nuclear environment, these genetic effects are only acting in cis. 
+We can discover two kinds of allelic imbalance changes driven by cis-effects. First, we can ask whether the allelic ratios are significantly different to 0.5, but without taking cell type into account. The statistical models are implemented in the scDALI package (Heinen et al, https://github.com/PMBio/scdali), and are formulated as a generalized linear mixed model, where the counts follow a beta-binomial distribution and the cell state is given by a random effect. 
+
+```{r test_persistent_imbalance}
+
+A <- t(counts_reference(allelic_counts["Ddt", ]))
+D <- t(counts_reference(allelic_counts["Ddt", ]) + 
+       counts_alternative(allelic_counts["Ddt", ]))
+
+pvals_persistent <- test_mean_R(A, D, mean_mu = .5)
+
+pvals_persistent$Mean # average allelic imbalance
+pvals_persistent$pval # average allelic imbalance
+
+```
+
+Ddt shows strong allelic bias (towards the CAST allele). 
+
+We can now test whether this bias is significantly variable by using the pseudotime-aware test: 
+
+
+```{r test_dynamic_imbalance}
+pseudotime <- allelic_counts$Pseudotime
+
+results_dynamic <- test_regions_R(A, D, pseudotime)
+results_dynamic
+
+```
+
+The allelic imbalance, that is, the cis-action on Ddt during spermatogenesis is strongly celltype-dependent. 
+To get an estimate of the strength of the variability, we can interpolate the estimate over time using gaussian process regression on the allelic rates: 
+
+```{r interpolate_allelic_rate}
+
+gp_results <- run_gp_R(A, D, cell_state = pseudotime, kernel = "RBF")
+
+plot_gene_GP(allelic_counts,  "Ddt", gp_results)
+
+names(gp_results) # this returns a function with variance estimate (of the interpolated trajectory)
+
+```
+
+A useful quantification is the magnitude of the allelic balance shift, for example as the quantile difference between the 10% cells with highest and lowest allelic imbalance: 
+
+```{r quantile_difference_allelic_rate}
+
+quantile(gp_results[[1]], 0.9) - quantile(gp_results[[1]], 0.1) # 0.2688
+
+```
+
+This corresponds to a shift in allelic imbalance of ~0.25, that is, from around balanced (0.5) to 3-fold overexpression of the CAST allele (0.25). 
+
